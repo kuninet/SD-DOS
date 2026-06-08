@@ -12,7 +12,9 @@
 ## ソースをアセンブルする方法
  * PC-8001エミュレータj80付属のtools80でアセンブル可能です
 
-`java -jar tools80.jar -tgt:z80 main.asm`
+`java -jar tools80.jar -tgt:z80 MAIN.asm`
+
+ビルド手順と成果物の整理方針は [docs/build.md](docs/build.md) を参照してください。
 
 ## リンク
 * [PC-8001用 8KB拡張RAMボード](https://github.com/chiqlappe/ram8k)
