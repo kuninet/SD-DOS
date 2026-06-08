@@ -1,5 +1,9 @@
 # PC-8001 SD-DOS
 
+## 本リポジトリについて
+* 本リポジトリは、[chiqlappe/SD-DOS](https://github.com/chiqlappe/SD-DOS) をForkした派生版です
+* 当面の目標として、FM音源などのVGM音楽ファイルをSD上に置き、PC-8001で少しずつロードしながら演奏するコマンドまたはAPIの追加を検討します
+
 ## このプログラムについて
 * 初代PC-8001の拡張ポートに接続されたmicroSDドライブと拡張RAM(8KBバッテリバックアップRAMまたは64KB RAM)を使って、SDメモリカードの読み書きを行います
 * FAT16とCMTファイルに対応
