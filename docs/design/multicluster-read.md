@@ -62,3 +62,4 @@ python3 scripts/test_multicluster.py src/MAIN.raw src/MAIN.sym
 * 実機(PC-8001+SDドライブ)でクラスタサイズ超ファイルの`RBYTE`を試し、本確認結果を再現するか
 * 既存`LOAD`/`RBYTE`のバグ修正を本Forkで行うか、行う場合の検証方法
 * 検証ハーネス(`scripts/z80mini.py`)をストリーム読み出しAPI実装後のテストにも使うか
+* ハーネスのZ80コアを、pc8001-cpm( https://github.com/kuninet/pc8001-cpm )で実績のあるオープンソースのZ80エミュレータ(PyPIの`z80`パッケージ)へ置き換えるか。今回は実行環境のPythonでビルドできなかったため最小実装を自作した
