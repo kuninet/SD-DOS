@@ -5,25 +5,33 @@
 
 現時点では、リポジトリ直下にアセンブリソース、ログ、CMT、WAV、HEX、MIFが並んでいる。まずは各ファイルの位置づけを明確にし、macOSでも追跡しやすい形へ段階的に整理する。
 
-## 現状の入口
-READMEには、PC-8001エミュレータj80付属のtools80でアセンブルできると記載されている。
+## 確認済みのビルド手順
+tools80(Release 6.50、Ver 6.6.68)で次のコマンドによりアセンブルできることを確認した。アセンブル対象の指定オプションは`-tgt=z80`である(READMEの旧記載`-tgt:z80`は誤りだったため修正済み)。
 
 ```sh
-java -jar tools80.jar -tgt:z80 MAIN.asm
+java -jar tools80.jar -tgt=z80 MAIN.asm
+java -jar tools80.jar -tgt=z80 IPL.asm
 ```
 
-`MAIN.asm.log.asz`の先頭には`Asm2Hex : Version 0.7.2`とあり、Z80向けの2パスアセンブル結果と見られる。`MAIN.asm`は`ORG 06000H`から始まり、`64KRAM.hex`も`6000H`から始まるIntel HEXになっているため、この2つは対応していると考えられる。
+出力は無指定でMONITOR形式のCMTファイルになり、`MAIN.cmt`、`IPL.cmt`ともリポジトリの既存成果物とバイト一致することを確認した。`-hex`(Intel HEX)、`-raw`(ベタイメージ)、`-debug`(ログ出力)のオプションも使える。
 
-## 外部ツール候補
-READMEにある`tools80.jar`は、リポジトリ内には含まれていない。OUT of STANDARDのPC-8001ページにはtools80などの関連ツールが掲載されているため、入手元候補として確認する。
+`MAIN.asm.log.asz`の先頭には`Asm2Hex : Version 0.7.2`とあり、原作者は古い版のtools80を使っていたと見られるが、現行のr6_50で同一の出力が得られる。
+
+## 外部ツールの確認結果
+`tools80.jar`はリポジトリ内には含まれていない。OUT of STANDARDのPC-8001ページから入手する。
 
 * ページ: http://upd780c1.g1.xrea.com/pc-8001/index.html
-* tools80候補: `tools80_r6_50.lzh`
-* CMT関連候補: `cmt8001_r7_3.lzh`
-* CMT再生候補: `pcm8001_r7_4.lzh`
-* エミュレータ候補: `j80_r6_134.lzh`
+* tools80: `bin/tools80_r6_50.lzh`(確認済み)
+* エミュレータ候補: `j80`(挙動確認用。導入は別途)
 
-これらの導入方法、ライセンス、macOSでの実行可否、SD-DOSの既存成果物との対応は別途確認する。
+版についての注意:
+* r6_50(Ver 6.6.68)で問題なくアセンブルできる
+* r6_44(Ver 6.6.29)では`SET_DATETIME`のような`SET`で始まるラベルをオペランドに書くと`Missing Operand`エラーになる。Ver 6.6.17で追加された`LD r, SET n,(IX+d)`形式への対応の影響と見られ、r6_50では解消されている。r6_44以前は使わないこと
+
+実行環境:
+* Java実行環境があれば動くため、macOSに限らずUNIX系やWindowsでもビルドできる
+* macOSではHomebrewの`openjdk`(管理者権限不要)で確認した。`/opt/homebrew/opt/openjdk/bin/java`
+* `.lzh`の展開もHomebrewの`lhasa`で確認した(`lha x tools80_r6_50.lzh`)
 
 ## 現在確認できる成果物
 リポジトリ直下には、次の成果物がある。
@@ -40,6 +48,13 @@ READMEにある`tools80.jar`は、リポジトリ内には含まれていない�
 ### `64KRAM.hex`
 64KB RAM環境向けのEPROM用データ。`MANUAL.txt`には、HEXファイルの`6000H`から`7FFFH`までを使うと記載されている。
 
+内容は`MAIN.asm`の出力そのものではなく、次の2部構成であることを確認した。
+
+* `6000H`〜`604BH`: ローダ。60バイトのルーチンを高位RAM(`EDCEH`)へコピーして実行し、ポート`E2H`のバンク切り替えを使ってBASIC ROM(`0000H`〜`5FFFH`)を裏RAMへコピーし、続いて`604CH`にあるSD-DOS本体(長さ`18F0H`)を`6000H`へコピーしてから`6000H`へジャンプする
+* `604CH`〜`793BH`: SD-DOS本体。リンクアドレスは`6000H`で、`MAIN.asm`のアセンブル出力とバイト一致することを確認した
+
+このため、`MAIN.asm`の出力と`64KRAM.hex`の単純なバイナリ比較はできない。ローダ部分のソースはリポジトリに存在しないため、復元とビルド手順の整備は別途行う。
+
 ### `SD_DOS_100119.wav`
 32KB RAM + 8KB拡張RAM環境で、モニタからロードするためのWAV。`MANUAL.txt`に使用手順が記載されている。
 
@@ -47,7 +62,7 @@ READMEにある`tools80.jar`は、リポジトリ内には含まれていない�
 WAV形式の成果物。更新履歴上は2020年3月8日版と対応している可能性が高いが、現時点では`MANUAL.txt`に直接の使用手順は確認できていない。
 
 ### `MAIN.cmt` / `IPL.cmt`
-CMT形式の成果物。`MAIN.asm`と`IPL.asm`に対応する可能性が高いが、正確な作成手順と用途は未確認。
+CMT形式の成果物。tools80 r6_50で`MAIN.asm`、`IPL.asm`をアセンブルした出力(MONITOR形式CMT)とバイト一致することを確認した。
 
 ### `SD_DOS_200308.mif`
 Quartus Prime系のMemory Initialization File。`WIDTH=8`、`DEPTH=8192`であり、8KB ROM相当の初期化データと見られる。どの入力から作られたか、どのハードウェア構成で使うかは未確認。
@@ -55,19 +70,14 @@ Quartus Prime系のMemory Initialization File。`WIDTH=8`、`DEPTH=8192`であ�
 ### `MAIN.asm.log.asz`
 `MAIN.asm`のアセンブルリストまたはログと見られる。公開対象として残すべきか、中間ファイルとして扱うべきかは未確認。
 
-## macOSでの扱い
-macOSで確認済みの手順は、現時点ではまだない。まずはJava実行環境と`tools80.jar`を用意し、READMEのアセンブル手順を試すところから始める。
+## 確認の進捗
+1. `tools80.jar`の入手と実行 … 確認済み(r6_50、Homebrew OpenJDK)
+2. `MAIN.cmt`、`IPL.cmt`の作成 … 確認済み(既存成果物とバイト一致)
+3. `64KRAM.hex`との対応 … 構造を確認済み(ローダ+本体。本体はMAIN.asm出力と一致)。ローダのソース復元とビルド手順整備は別途
+4. CMTからWAVを作る方法 … 未確認
+5. MIFの作成方法 … 未確認
 
-当面の確認順は次のとおり。
-
-1. `tools80.jar`を入手して実行できるか確認する
-2. `MAIN.asm`からIntel HEX相当の出力を作れるか確認する
-3. 既存の`64KRAM.hex`と比較する
-4. `MAIN.cmt`、`IPL.cmt`の作成方法を調べる
-5. CMTからWAVを作る方法を調べる
-6. MIFの作成方法を調べる
-
-ROMライタ、FPGA書き込み、実機ロードはmacOS上のビルドとは別作業として扱う。
+ROMライタ、FPGA書き込み、実機ロードはビルドとは別作業として扱う。
 
 ## Makefile化の方針
 Makefileを追加する場合は、最初から全成果物を扱わず、確認済みの手順を薄く包むところから始める。未確認の工程はターゲット化しない。
@@ -95,10 +105,8 @@ Makefileを追加する場合は、最初から全成果物を扱わず、確認
 既存の`INCLUDE`指定や外部ツールの相対パス挙動が未確認のため、ディレクトリ移動はビルド手順を確認した後に行う。
 
 ## 今後の確認事項
-* `tools80.jar`の入手元と版
-* `tools80.jar`の出力形式
-* `MAIN.cmt`と`IPL.cmt`の作成手順
+* `64KRAM.hex`のローダ部分のソース復元とビルド手順
 * CMTからWAVへの変換手順
 * MIFの作成手順
-* 既存成果物を版管理に残す範囲
+* 既存成果物を版管理に残す範囲(オリジナル由来の成果物は専用ディレクトリへ保存する方針)
 * 最終的なディレクトリ構成
