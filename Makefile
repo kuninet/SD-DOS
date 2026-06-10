@@ -9,6 +9,8 @@
 #   make test     回帰テスト(複数クラスタ読みとストリーム読み出しAPI)を実行する
 #   make list     アセンブルリストとシンボルファイルを build/ に生成する
 #   make verify-orig  オリジナル成果物とのバイト一致確認(複数クラスタ読み修正前のコード専用)
+#   make rom      EPROM書き込み用ROMイメージを build/rom/ に生成する
+#   make burn     miniproでEPROMへ書き込む(例: make burn DEVICE=W27C512)
 #   make clean    build/ を削除する
 
 JAVA    ?= java
@@ -64,6 +66,24 @@ test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw
 	$(PYTHON) scripts/test_stream_api.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym
 	$(PYTHON) scripts/test_sample.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/SDUMP.raw
 
+# EPROM書き込み用ROMイメージの一括生成
+ROMDIR       = $(BUILD)/rom
+ROM_DEVICES ?= 27C64 28C64 27C256 28C256 W27C512
+
+rom: $(BUILD)/64KRAM.hex scripts/makerom.py
+	mkdir -p $(ROMDIR)
+	for d in $(ROM_DEVICES); do \
+		$(PYTHON) scripts/makerom.py $(BUILD)/64KRAM.hex --device $$d -o $(ROMDIR)/64KRAM-$$d || exit 1; \
+	done
+
+# miniproによるEPROM書き込み。デバイス名は `minipro -L <検索語>` で確認すること
+MINIPRO ?= minipro
+DEVICE  ?= W27C512
+ROM     ?= $(ROMDIR)/64KRAM-$(DEVICE).bin
+
+burn:
+	$(MINIPRO) -p "$(DEVICE)" -w "$(ROM)"
+
 # オリジナル再現の確認用。複数クラスタ読みのバグ修正以降のコードでは一致しない
 verify-orig: all
 	cmp $(BUILD)/MAIN.cmt dist/original/MAIN.cmt
@@ -77,4 +97,4 @@ $(BUILD):
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all verify-orig list test clean
+.PHONY: all verify-orig list test rom burn clean

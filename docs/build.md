@@ -30,6 +30,24 @@ java -jar tools/tools80.jar -tgt=z80 src/MAIN.asm
 
 `MAIN.asm.log.asz`の先頭には`Asm2Hex : Version 0.7.2`とあり、原作者は古い版のtools80を使っていたと見られるが、現行のr6_50で同一の出力が得られる。
 
+## EPROMへの書き込み
+`make rom`で、`build/rom/`にターゲット別のROMイメージ(`.bin`と`.hex`)を生成する。既定のターゲットは27C64、28C64、27C256、28C256、W27C512で、`make rom ROM_DEVICES="27C512"`のように変更できる。
+
+イメージはデバイス先頭(0000H)基準で、CPUアドレス`6000H`〜`7FFFH`の8KBを切り出して作る。8KBを超えるデバイスには既定で8KBブロックを全域へミラー(繰り返し)配置するため、拡張ROMソケット側で上位アドレス線がどう固定されていても同じ内容が見える。特定位置への単独配置が必要な場合は`scripts/makerom.py`の`--offset`を使う。
+
+書き込みはminipro(TL866系ライタ用のオープンソースツール)を使う。macOSではHomebrewで導入できる(LinuxなどのUNIX環境でも各パッケージやソースから導入できる)。
+
+```sh
+brew install minipro
+minipro -L 27C256        # ライタが認識する正確なデバイス名を検索する
+make burn DEVICE=W27C512                                      # build/rom/64KRAM-W27C512.bin を書き込む
+make burn DEVICE="M27C256B@DIP28" ROM=build/rom/64KRAM-27C256.bin
+```
+
+`DEVICE`はminiproの`-p`へそのまま渡されるため、`minipro -L`で確認した名前を指定する。
+
+注意: `MAIN.hex`単体(ローダなし)のイメージも`scripts/makerom.py`で作れるが、SD-DOSは`6000H`〜`7FFFH`内のワークエリアへ書き込むため、この8KB窓へ直接ROMとして置いても動作しない。EPROM運用には、起動時に本体をRAMへコピーする`64KRAM.hex`(64KB RAM環境向け)を使うこと。
+
 ## 外部ツールの確認結果
 `tools80.jar`はリポジトリ内には含まれていない。OUT of STANDARDのPC-8001ページから入手する。
 
@@ -108,5 +126,6 @@ ROMライタ、FPGA書き込み、実機ロードはビルドとは別作業と�
 確認済みの工程(CMT、64KRAM.hex)だけをMakefileのターゲットにしている。WAV、MIFは作成方法が確認できてから個別に検討する。
 
 ## 今後の確認事項
+* miniproと実機ライタでの書き込み・実機起動の確認
 * CMTからWAVへの変換手順
 * MIFの作成手順
