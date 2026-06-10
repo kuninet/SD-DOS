@@ -35,8 +35,8 @@ SD-DOS本体の先頭(ORG 6000H)は現在「DB "AB"(自動起動マーカー)+�
 
 1. ワーキングディレクトリを退避し、パス部があればディレクトリを移動する(既存のCHANGE_WDIRを再利用)
 2. エントリ名でディレクトリエントリを検索する(既存のGET_DENT、属性=ファイル)。見つからなければワーキングディレクトリを復帰し、CY=1、A=01Hで返る
-3. DIR_ENTRYのFATエントリ(開始クラスタ#)でファイルポインタを初期化し(既存のINIT_FP)、ファイルサイズを残りバイト数(STRM_REMAIN)へ設定する
-4. 先頭セクタをFILE_BFFRへ読み込み(後述のSTRM_READ_SCTR)、STRM_STATを「読み出し中」にしてワーキングディレクトリを復帰する
+3. DIR_ENTRYのFATエントリ(開始クラスタ#)をTGT_CLSTRへ設定し、ファイルサイズを残りバイト数(STRM_REMAIN)へ設定する
+4. 既存のPREP_READでファイルポインタを初期化して先頭セクタをFILE_BFFRへ読み込み、STRM_STATを「読み出し中」にしてワーキングディレクトリを復帰する
 
 すでにオープン中に呼ばれた場合は、暗黙に閉じて開き直す。サイズ0のファイルもオープンは成功し、最初のSTRM_READがEOFを返す。
 
@@ -82,16 +82,19 @@ MAIN.asmのワークエリア末尾に追加する(DS領域のため本体のコ
 
 ## 内部構成
 
+前提として、複数クラスタ読みの不整合([複数クラスタ読みの既存挙動の確認結果](multicluster-read.md))は本APIの実装に先立って修正する。修正後は既存の読み出し経路がそのまま正しく動くため、新設はラッパーと状態管理だけになる。
+
 新設ルーチンはSTRM.asm(新ファイル)にまとめ、MAIN.asmからINCLUDEする。
 
-**新設ルーチン**:
+**新設(ラッパー)**:
 
-- **STRM_READ_SCTR**: カレントクラスタ(FP_CLSTR)から既存のGET_FIRST_SCTRで開始セクタ#を求め、FP_SCTR_SNを加えたセクタをFILE_BFFRへ読み込む。既存のGET_FP_CLSTR(先頭からのFATウォーク)を使わないことで、複数クラスタ読みの既知の問題([複数クラスタ読みの既存挙動の確認結果](multicluster-read.md))を回避する
-- **STRM_ADVANCE**: ファイルポインタを1進める。セクタ境界ではSTRM_READ_SCTRで次セクタを読み、クラスタ境界では既存のNEXT_CLSTRでFATをたどってからSTRM_READ_SCTRを呼ぶ。次クラスタが0FFFFHの場合は既存どおりエラー終了(EOF前判定により正常なファイルでは到達しない)
+- **STRM_OPEN**: ワーキングディレクトリの退避、パス解決(CHANGE_WDIR)、エントリ検索(GET_DENT)、TGT_CLSTRと残りバイト数の設定、PREP_READによる初期化、状態設定、ワーキングディレクトリの復帰
+- **STRM_READ**: 状態と残りバイト数を判定した後、既存のFP2BPで現在位置の1バイトを取得し、残りが0より大きい場合だけ既存のINC_FPでファイルポインタを進める
+- **STRM_CLOSE**: 状態のクリア
 
-**再利用(変更しない)**: CHANGE_WDIR、GET_DENT、RESTORE_WDIR、INIT_FP、GET_FIRST_SCTR、LOAD_BFFR、NEXT_CLSTR、DWORD演算
+**再利用(変更しない)**: CHANGE_WDIR、GET_DENT、RESTORE_WDIR、PREP_READ(INIT_FP、READ_FP_SCTRを含む)、FP2BP、INC_FP(NEXT_CLSTR、LOAD_BFFRを含む)、DWORD演算
 
-既存のPREP_READは使わない。READ_FP_SCTR(GET_FP_CLSTR経由)とIS_CALLBACKの副作用を避けるため、オープン時の初期化はSTRM側で行う。
+PREP_READが行うIS_CALLBACKのクリアは、CMT読み込み向けフラグの初期化であり、ストリーム読み出しでは無害である。
 
 ## 利用例
 
