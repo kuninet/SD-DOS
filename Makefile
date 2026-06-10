@@ -59,6 +59,7 @@ $(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
 list: $(BUILD)/MAIN.raw
 
 test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw
+	$(PYTHON) scripts/test_emu_io.py
 	$(PYTHON) scripts/test_multicluster.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym
 	$(PYTHON) scripts/test_stream_api.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym
 	$(PYTHON) scripts/test_sample.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/SDUMP.raw

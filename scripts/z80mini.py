@@ -29,6 +29,8 @@ class Z80:
         self.hooks = {}  # アドレス -> callable(cpu)。Trueを返すとRET相当を行う
         self.rst_hooks = {}  # RSTベクタ(08H,10H,...) -> callable(cpu)
         self.output = bytearray()  # RSTフック等が捕捉した出力
+        self.io_log = []  # OUT (n),A の記録 [(ポート, 値), ...]
+        self.io_in = {}  # ポート -> callable(cpu)->値。未登録ポートのINは0FFH
 
     # ---- レジスタペア ----
     def get_bc(self):
@@ -417,6 +419,13 @@ class Z80:
                 self.sp = self.get_hl()
                 return
             if op in (0xF3, 0xFB):  # DI/EI
+                return
+            if op == 0xD3:  # OUT (n),A
+                self.io_log.append((self.fetch(), self.a))
+                return
+            if op == 0xDB:  # IN A,(n)
+                port = self.fetch()
+                self.a = self.io_in[port](self) if port in self.io_in else 0xFF
                 return
             if lo == 7:  # RST
                 vec = op & 0x38
