@@ -14,7 +14,7 @@
 
 `make`(または `java -jar tools/tools80.jar -tgt=z80 src/MAIN.asm`)
 
-ビルド手順とディレクトリ構成は [docs/build.md](docs/build.md) を参照してください。
+ビルド手順とディレクトリ構成は [docs/build.md](docs/build.md) を、全体の構成は [docs/architecture.md](docs/architecture.md) を参照してください。
 
 ## リンク
 * [PC-8001用 8KB拡張RAMボード](https://github.com/chiqlappe/ram8k)
