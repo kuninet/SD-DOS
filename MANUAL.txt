@@ -4,6 +4,7 @@ PC-8001 SD-DOS マニュアル
 ■更新履歴
 	・2026/ 6/10	ストリーム読み出しAPI(STRM_OPEN/STRM_READ/STRM_CLOSE)とサンプル(samples/SDUMP.asm)を追加
 			複数クラスタにまたがるファイルの逐次読みが2クラスタ目以降正しくない不具合を修正
+			VGM再生サンプル(samples/VGMPLAY.asm、YM2203/PSG対応)を追加
 	・2022/ 8/14	64KB RAM環境で使用できるEPROM版SD-DOSを公開
 	・2020/ 3/ 8	RBYTE命令を追加
 	・2020/ 1/19	MOUNT時にシフトキーを押下したままにすると自動実行をキャンセルできる機能を追加
@@ -278,7 +279,7 @@ API	STRM_CLOSE (600BH)
 	・オープンからクローズまでの間は、SD-DOSの命令(LOAD等)を使用しないでください
 	　(ファイルバッファを共用しているため)
 	・SDアクセスエラー等はBASICのエラーとして終了します
-	・利用例は samples/SDUMP.asm を参照してください
+	・利用例は samples/SDUMP.asm(16進ダンプ)、samples/VGMPLAY.asm(VGM再生)を参照してください
 	　(LOAD "SDUMP.CMT" でロードし、CMD R で実行します)
 
 ■未実装命令
