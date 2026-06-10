@@ -8,7 +8,7 @@
 
 ```sh
 make          # build/ に MAIN.cmt、IPL.cmt、64KRAM.hex を生成する
-make test     # 回帰テスト(scripts/test_multicluster.py)を実行する
+make test     # 回帰テスト(複数クラスタ読みとストリーム読み出しAPI)を実行する
 make list     # アセンブルリスト(MAIN.asm.log.asz)とシンボル(MAIN.sym)を build/ に生成する
 make verify-orig  # オリジナル成果物とのバイト一致確認(複数クラスタ読み修正前のコード専用)
 make clean    # build/ を削除する

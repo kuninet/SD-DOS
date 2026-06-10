@@ -119,7 +119,7 @@ FNAME:	DB	"/MUSIC/SONG.VGM",00H
 
 ## 今後の確認事項
 
-* パス文字列の終端規約(00H)と既存のSPLIT_FPATH/STR2SFNの整合の実装時確認
+* パス文字列の終端規約(00H)と既存のSPLIT_FPATH/STR2SFNの整合 … 確認済み(`scripts/test_stream_api.py`で動作確認)
 * オープン失敗ステータスの追加要否(属性不一致など)
 * 予約エントリの将来用途(状態取得、シークなど)
-* 検証ハーネス(scripts/test_multicluster.py相当)によるAPIのテスト方法
+* APIのテストは`scripts/test_stream_api.py`(`make test`)で行う … 整備済み
