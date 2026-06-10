@@ -9,6 +9,8 @@
 ```sh
 make          # build/ に MAIN.cmt、IPL.cmt、64KRAM.hex を生成する
 make verify   # 生成物が dist/original/ のオリジナル成果物とバイト一致するか確認する
+make list     # アセンブルリスト(MAIN.asm.log.asz)とシンボル(MAIN.sym)を build/ に生成する
+make test     # 検証ハーネス(scripts/test_multicluster.py)を実行する
 make clean    # build/ を削除する
 ```
 

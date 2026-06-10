@@ -7,6 +7,8 @@
 # 主なターゲット:
 #   make          MAIN.cmt, IPL.cmt, 64KRAM.hex を build/ に生成する
 #   make verify   生成物が dist/original/ のオリジナル成果物とバイト一致するか確認する
+#   make list     アセンブルリストとシンボルファイルを build/ に生成する
+#   make test     検証ハーネス(scripts/test_multicluster.py)を実行する
 #   make clean    build/ を削除する
 
 JAVA    ?= java
@@ -39,6 +41,18 @@ $(BUILD)/LOADER64.hex: src/LOADER64.asm | $(BUILD)
 $(BUILD)/64KRAM.hex: $(BUILD)/LOADER64.hex $(BUILD)/MAIN.hex scripts/make64kram.py
 	$(PYTHON) scripts/make64kram.py $(BUILD)/LOADER64.hex $(BUILD)/MAIN.hex -o $@
 
+# -debugでアセンブルリスト(.log.asz)とシンボル(.sym)、-rawでベタイメージも生成する
+$(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
+	$(ASM) -raw -debug -sym src/MAIN.asm
+	mv src/MAIN.raw $@
+	mv src/MAIN.sym $(BUILD)/MAIN.sym
+	mv src/MAIN.asm.log.asz $(BUILD)/MAIN.asm.log.asz
+
+list: $(BUILD)/MAIN.raw
+
+test: $(BUILD)/MAIN.raw
+	$(PYTHON) scripts/test_multicluster.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym
+
 verify: all
 	cmp $(BUILD)/MAIN.cmt dist/original/MAIN.cmt
 	cmp $(BUILD)/IPL.cmt dist/original/IPL.cmt
@@ -51,4 +65,4 @@ $(BUILD):
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all verify clean
+.PHONY: all verify list test clean
