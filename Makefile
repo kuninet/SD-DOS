@@ -6,7 +6,7 @@
 #
 # 主なターゲット:
 #   make          MAIN.cmt, IPL.cmt, 64KRAM.hex を build/ に生成する
-#   make test     回帰テスト(scripts/test_multicluster.py)を実行する
+#   make test     回帰テスト(複数クラスタ読みとストリーム読み出しAPI)を実行する
 #   make list     アセンブルリストとシンボルファイルを build/ に生成する
 #   make verify-orig  オリジナル成果物とのバイト一致確認(複数クラスタ読み修正前のコード専用)
 #   make clean    build/ を削除する
@@ -52,6 +52,7 @@ list: $(BUILD)/MAIN.raw
 
 test: $(BUILD)/MAIN.raw
 	$(PYTHON) scripts/test_multicluster.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym
+	$(PYTHON) scripts/test_stream_api.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym
 
 # オリジナル再現の確認用。複数クラスタ読みのバグ修正以降のコードでは一致しない
 verify-orig: all

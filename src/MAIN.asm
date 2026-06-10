@@ -14,6 +14,20 @@ DEBUG	EQU	FALSE				;
 	ORG	06000H
 
 	DB	"AB"				;自動起動用マーカー
+	JP	INIT				;6002H 起動エントリ
+
+;-------------------------------------------------
+;ストリーム読み出しAPI ジャンプテーブル
+;・固定アドレス。並びは追加のみとし、既存エントリの位置を変えないこと
+;・仕様は docs/design/api-spec.md を参照
+;-------------------------------------------------
+	JP	STRM_OPEN			;6005H ストリームを開く
+	JP	STRM_READ			;6008H １バイト取得
+	JP	STRM_CLOSE			;600BH ストリームを閉じる
+	JP	STRM_RSVD			;600EH 予約
+	JP	STRM_RSVD			;6011H 予約
+
+INIT:
 
 if DEBUG
 	CALL	INIT_DEBUG			;デバッグルーチン初期化
@@ -25,6 +39,8 @@ endif
 	CALL	INIT_FKEY			;ファンクションキー設定変更
 	CALL	INIT_BASIC			;BASIC初期化
 	CALL	CMD_ON				;インフォメーションスイッチ
+	XOR	A				;ストリーム読み出しを未オープンにする
+	LD	(STRM_STAT),A			;
 
 	LD	HL,MSG_TITLE			;タイトル表示
 	CALL	PRINT				;
@@ -130,6 +146,7 @@ INCLUDE	"CMT.asm"				;CMTファイル関連
 INCLUDE	"BIN.asm"				;BINファイル関連
 INCLUDE	"BAS.asm"				;BASファイル関連
 INCLUDE	"RAW.asm"				;任意ファイル関連
+INCLUDE	"STRM.asm"				;ストリーム読み出しAPI
 INCLUDE	"DATE.asm"				;日時
 INCLUDE	"DUMP.asm"				;ダンプ表示
 INCLUDE	"CMD.asm"				;コマンド
@@ -253,6 +270,8 @@ FP:		DS	04H			;ファイルポインタ
 FP_CLSTR:	DS	02H			;FPと結びつくファイルのカレントクラスタ＃。FPと連動して変化する
 FP_CLSTR_SN:	DS	02H			;FPが示すアドレスが、先頭から何番目のクラスタに含まれるかを示す！クラスタ＃ではない！
 FP_SCTR_SN:	DS	01H			;FPが示すアドレスが、クラスタ内の何番目のセクタに含まれるかを示す！セクタ＃ではない！
+STRM_REMAIN:	DS	04H			;ストリーム読み出しの残りバイト数
+STRM_STAT:	DS	01H			;ストリーム読み出しの状態 00H=未オープン,01H=読み出し中,02H=EOF到達
 
 ATRB:		DS	01H			;ファイル属性表示用文字列の文字数指定部
 		DS	06H			;ファイル属性表示用文字列本体

@@ -27,6 +27,8 @@ class Z80:
         self.sp = 0xF000
         self.pc = 0
         self.hooks = {}  # アドレス -> callable(cpu)。Trueを返すとRET相当を行う
+        self.rst_hooks = {}  # RSTベクタ(08H,10H,...) -> callable(cpu)
+        self.output = bytearray()  # RSTフック等が捕捉した出力
 
     # ---- レジスタペア ----
     def get_bc(self):
@@ -417,7 +419,11 @@ class Z80:
             if op in (0xF3, 0xFB):  # DI/EI
                 return
             if lo == 7:  # RST
-                raise Trap(f"RST {op & 0x38:02X}H", self)
+                vec = op & 0x38
+                if vec in self.rst_hooks:
+                    self.rst_hooks[vec](self)
+                    return
+                raise Trap(f"RST {vec:02X}H", self)
             if op == 0xCB:
                 sub = self.fetch()
                 r, q = sub & 7, (sub >> 3) & 7
