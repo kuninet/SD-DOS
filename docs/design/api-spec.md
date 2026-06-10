@@ -115,7 +115,7 @@ FNAME:	DB	"/MUSIC/SONG.VGM",00H
 
 - FILE_BFFRを既存コマンドと共用するため、ストリーム読み出し中(オープン〜クローズ)はSD-DOSの既存コマンドを使わない([ストリーム読み出しの取得単位とバッファ](buffer-unit.md))
 - STRM_READは内部で裏レジスタを使用するため、利用側が裏レジスタに依存する場合は注意する
-- 本体コード長がローダのコピー長BODY_LEN(18F0H)を超えた場合は、LOADER64.asmとscripts/make64kram.pyの定数更新が必要(scripts/make64kram.pyがエラーで検出する)
+- 本体コード長がローダのコピー長BODY_LEN(現在1A00H)を超えた場合は、LOADER64.asmとscripts/make64kram.pyの定数更新が必要(scripts/make64kram.pyがエラーで検出する)
 
 ## 今後の確認事項
 

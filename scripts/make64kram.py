@@ -8,10 +8,10 @@
 
 EPROMイメージの構成:
     6000H-604BH ローダ(LOADER64.asm)
-    604CH-793BH SD-DOS本体(MAIN.asmの6000H-79xxHのコードを604CHへ再配置)
+    604CH以降    SD-DOS本体(MAIN.asmの6000H-79xxHのコードを604CHへ再配置)
                 ローダのコピー長BODY_LEN(18F0H)に満たない部分はFFHで埋める
 
-本体のコードがBODY_LEN(18F0H)を超えた場合はエラーになる。
+本体のコードがBODY_LENを超えた場合はエラーになる。
 その場合はLOADER64.asmのBODY_LENも合わせて更新すること。
 """
 import argparse
@@ -19,7 +19,7 @@ import sys
 
 ORG = 0x6000
 LOADER_LEN = 0x4C
-BODY_LEN = 0x18F0  # LOADER64.asmのBODY_LENと一致させること
+BODY_LEN = 0x1A00  # LOADER64.asmのBODY_LENと一致させること
 RECORD_LEN = 16
 
 

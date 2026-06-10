@@ -8,13 +8,15 @@
 
 ```sh
 make          # build/ に MAIN.cmt、IPL.cmt、64KRAM.hex を生成する
-make verify   # 生成物が dist/original/ のオリジナル成果物とバイト一致するか確認する
+make test     # 回帰テスト(scripts/test_multicluster.py)を実行する
 make list     # アセンブルリスト(MAIN.asm.log.asz)とシンボル(MAIN.sym)を build/ に生成する
-make test     # 検証ハーネス(scripts/test_multicluster.py)を実行する
+make verify-orig  # オリジナル成果物とのバイト一致確認(複数クラスタ読み修正前のコード専用)
 make clean    # build/ を削除する
 ```
 
-Javaのパスは`make JAVA=/path/to/java`のように変数で指定できる。tools80(Release 6.50、Ver 6.6.68)で、3つの成果物すべてがオリジナルとバイト一致することを確認済みである。
+Javaのパスは`make JAVA=/path/to/java`のように変数で指定できる。tools80(Release 6.50、Ver 6.6.68)で、改変前のソースから3つの成果物すべてがオリジナルとバイト一致することを確認済みである。
+
+複数クラスタ読みのバグ修正以降はコードがオリジナルと意図的に異なるため、`make verify-orig`は一致しない。機能の回帰確認には`make test`を使う。
 
 tools80を直接実行する場合は次のとおり。アセンブル対象の指定オプションは`-tgt=z80`である。出力はソースファイルと同じディレクトリ(`src/`)に書かれる。
 
@@ -24,7 +26,7 @@ java -jar tools/tools80.jar -tgt=z80 src/MAIN.asm
 
 出力は無指定でMONITOR形式のCMTファイルになり、`-hex`(Intel HEX)、`-raw`(ベタイメージ)、`-debug`(ログ出力)のオプションも使える。tools80は実行中に`type 'OK'`の確認入力を求めることがあるため、Makefileでは`printf 'OK\n'`を標準入力へ渡している。
 
-`64KRAM.hex`は、復元したローダソース`src/LOADER64.asm`と`src/MAIN.asm`のアセンブル結果(Intel HEX)を`scripts/make64kram.py`で合成して生成する(`make`が自動で行う)。`MAIN.asm`の出力には`EXT.asm`由来の`0C000H`ブロック(拡張コマンド)も含まれるが、EPROMイメージには`6000H`〜`7FFFH`の範囲だけを合成する。本体のコード長がローダのコピー長`BODY_LEN`(`18F0H`)を超えた場合は、`LOADER64.asm`と`scripts/make64kram.py`の両方の定数を更新する必要がある(スクリプトがエラーで検出する)。
+`64KRAM.hex`は、復元したローダソース`src/LOADER64.asm`と`src/MAIN.asm`のアセンブル結果(Intel HEX)を`scripts/make64kram.py`で合成して生成する(`make`が自動で行う)。`MAIN.asm`の出力には`EXT.asm`由来の`0C000H`ブロック(拡張コマンド)も含まれるが、EPROMイメージには`6000H`〜`7FFFH`の範囲だけを合成する。本体のコード長がローダのコピー長`BODY_LEN`(現在`1A00H`)を超えた場合は、`LOADER64.asm`と`scripts/make64kram.py`の両方の定数を更新する必要がある(スクリプトがエラーで検出する)。
 
 `MAIN.asm.log.asz`の先頭には`Asm2Hex : Version 0.7.2`とあり、原作者は古い版のtools80を使っていたと見られるが、現行のr6_50で同一の出力が得られる。
 
@@ -61,7 +63,7 @@ java -jar tools/tools80.jar -tgt=z80 src/MAIN.asm
 
 内容は`MAIN.asm`の出力そのものではなく、次の2部構成であることを確認した。
 
-* `6000H`〜`604BH`: ローダ。60バイトのルーチンを高位RAM(`EDCEH`)へコピーして実行し、ポート`E2H`のバンク切り替えを使ってBASIC ROM(`0000H`〜`5FFFH`)を裏RAMへコピーし、続いて`604CH`にあるSD-DOS本体(長さ`18F0H`)を`6000H`へコピーしてから`6000H`へジャンプする
+* `6000H`〜`604BH`: ローダ。60バイトのルーチンを高位RAM(`EDCEH`)へコピーして実行し、ポート`E2H`のバンク切り替えを使ってBASIC ROM(`0000H`〜`5FFFH`)を裏RAMへコピーし、続いて`604CH`にあるSD-DOS本体(長さ`BODY_LEN`。オリジナルは`18F0H`)を`6000H`へコピーしてから`6000H`へジャンプする
 * `604CH`〜`793BH`: SD-DOS本体。リンクアドレスは`6000H`で、`MAIN.asm`のアセンブル出力とバイト一致することを確認した
 
 このため、`MAIN.asm`の出力と`64KRAM.hex`の単純なバイナリ比較はできない。ローダ部分のソースは`LOADER64.asm`として復元済みで、`scripts/make64kram.py`による合成で`64KRAM.hex`をソースから再現できる(バイト一致を確認済み)。

@@ -98,12 +98,14 @@ def run_case(name, raw_path, syms, chain, file_size):
     log = []
     cpu = setup(raw_path, syms, disk, file_size, log)
     got = bytearray()
+    stopped = False
     try:
         cpu.call(syms["PREP_READ"])
         for _ in range(file_size):
             cpu.call(syms["FETCH_1BYTE"])
             got.append(cpu.a)
     except Trap as t:
+        stopped = True
         print(f"  {len(got)}バイト目の取得中に停止: {t.name}")
     print("  セクタ読み込みログ (セクタ#, 転送先, FP_CLSTR, FP_CLSTR_SN):")
     for sct, dest, fc, fcsn in log:
@@ -117,24 +119,37 @@ def run_case(name, raw_path, syms, chain, file_size):
         bad = next(i for i in range(len(got)) if got[i] != content[i])
         print(f"  結果: 不一致! 最初の不一致={bad}バイト目 "
               f"(期待{content[bad]:02X} 実際{got[bad]:02X})")
-    return ok, len(got)
+    return ok, len(got), stopped
 
 
 def main():
     raw_path, sym_path = sys.argv[1], sys.argv[2]
     syms = load_symbols(sym_path)
+    results = []
 
-    # ケースC: 1クラスタに収まるファイル(対照ケース)
-    run_case("ケースC 1クラスタ・対照", raw_path, syms,
-             {2: 0xFFFF}, file_size=1000)
+    # ケースC: 1クラスタに収まるファイル(対照ケース)。全バイト一致を期待
+    ok, n, stopped = run_case("ケースC 1クラスタ・対照", raw_path, syms,
+                              {2: 0xFFFF}, file_size=1000)
+    results.append(("C", ok and n == 1000 and not stopped))
 
-    # ケースA: 3クラスタにまたがるファイル(終端はクラスタ途中)
-    run_case("ケースA 3クラスタ・終端は途中", raw_path, syms,
-             {2: 3, 3: 4, 4: 0xFFFF}, file_size=2 * 1024 + 612)
+    # ケースA: 3クラスタにまたがるファイル(終端はクラスタ途中)。全バイト一致を期待
+    ok, n, stopped = run_case("ケースA 3クラスタ・終端は途中", raw_path, syms,
+                              {2: 3, 3: 4, 4: 0xFFFF}, file_size=2 * 1024 + 612)
+    results.append(("A", ok and n == 2 * 1024 + 612 and not stopped))
 
-    # ケースB: クラスタサイズちょうどの倍数で終わるファイル
-    run_case("ケースB 2クラスタ・境界ちょうどで終端", raw_path, syms,
-             {2: 3, 3: 0xFFFF}, file_size=2 * 1024)
+    # ケースB: クラスタサイズちょうどの倍数で終わるファイル。
+    # 既存仕様では最終バイト取得のINC_FP先読みが非復帰エラーへ進むため、
+    # 2047バイトまで一致し、最終バイトの取得で停止することを期待する
+    ok, n, stopped = run_case("ケースB 2クラスタ・境界ちょうどで終端", raw_path, syms,
+                              {2: 3, 3: 0xFFFF}, file_size=2 * 1024)
+    results.append(("B", ok and n == 2 * 1024 - 1 and stopped))
+
+    print()
+    failed = [name for name, passed in results if not passed]
+    for name, passed in results:
+        print(f"ケース{name}: {'PASS' if passed else 'FAIL'}")
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
