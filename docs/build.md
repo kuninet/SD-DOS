@@ -15,6 +15,16 @@ java -jar tools80.jar -tgt=z80 IPL.asm
 
 出力は無指定でMONITOR形式のCMTファイルになり、`MAIN.cmt`、`IPL.cmt`ともリポジトリの既存成果物とバイト一致することを確認した。`-hex`(Intel HEX)、`-raw`(ベタイメージ)、`-debug`(ログ出力)のオプションも使える。
 
+`64KRAM.hex`は、復元したローダソース`LOADER64.asm`と`MAIN.asm`のアセンブル結果を合成して生成する。生成結果が既存成果物とバイト一致することを確認した。
+
+```sh
+java -jar tools80.jar -tgt=z80 -hex LOADER64.asm
+java -jar tools80.jar -tgt=z80 -hex MAIN.asm
+python3 scripts/make64kram.py LOADER64.hex MAIN.hex -o 64KRAM.hex
+```
+
+`MAIN.asm`の出力には`EXT.asm`由来の`0C000H`ブロック(拡張コマンド)も含まれるが、EPROMイメージには`6000H`〜`7FFFH`の範囲だけを合成する。本体のコード長がローダのコピー長`BODY_LEN`(`18F0H`)を超えた場合は、`LOADER64.asm`と`scripts/make64kram.py`の両方の定数を更新する必要がある(スクリプトがエラーで検出する)。
+
 `MAIN.asm.log.asz`の先頭には`Asm2Hex : Version 0.7.2`とあり、原作者は古い版のtools80を使っていたと見られるが、現行のr6_50で同一の出力が得られる。
 
 ## 外部ツールの確認結果
@@ -53,7 +63,7 @@ java -jar tools80.jar -tgt=z80 IPL.asm
 * `6000H`〜`604BH`: ローダ。60バイトのルーチンを高位RAM(`EDCEH`)へコピーして実行し、ポート`E2H`のバンク切り替えを使ってBASIC ROM(`0000H`〜`5FFFH`)を裏RAMへコピーし、続いて`604CH`にあるSD-DOS本体(長さ`18F0H`)を`6000H`へコピーしてから`6000H`へジャンプする
 * `604CH`〜`793BH`: SD-DOS本体。リンクアドレスは`6000H`で、`MAIN.asm`のアセンブル出力とバイト一致することを確認した
 
-このため、`MAIN.asm`の出力と`64KRAM.hex`の単純なバイナリ比較はできない。ローダ部分のソースはリポジトリに存在しないため、復元とビルド手順の整備は別途行う。
+このため、`MAIN.asm`の出力と`64KRAM.hex`の単純なバイナリ比較はできない。ローダ部分のソースは`LOADER64.asm`として復元済みで、`scripts/make64kram.py`による合成で`64KRAM.hex`をソースから再現できる(バイト一致を確認済み)。
 
 ### `SD_DOS_100119.wav`
 32KB RAM + 8KB拡張RAM環境で、モニタからロードするためのWAV。`MANUAL.txt`に使用手順が記載されている。
@@ -73,7 +83,7 @@ Quartus Prime系のMemory Initialization File。`WIDTH=8`、`DEPTH=8192`であ�
 ## 確認の進捗
 1. `tools80.jar`の入手と実行 … 確認済み(r6_50、Homebrew OpenJDK)
 2. `MAIN.cmt`、`IPL.cmt`の作成 … 確認済み(既存成果物とバイト一致)
-3. `64KRAM.hex`との対応 … 構造を確認済み(ローダ+本体。本体はMAIN.asm出力と一致)。ローダのソース復元とビルド手順整備は別途
+3. `64KRAM.hex`との対応 … 確認済み(ローダソースを`LOADER64.asm`へ復元し、ソースからの再現でバイト一致)
 4. CMTからWAVを作る方法 … 未確認
 5. MIFの作成方法 … 未確認
 
@@ -105,7 +115,6 @@ Makefileを追加する場合は、最初から全成果物を扱わず、確認
 既存の`INCLUDE`指定や外部ツールの相対パス挙動が未確認のため、ディレクトリ移動はビルド手順を確認した後に行う。
 
 ## 今後の確認事項
-* `64KRAM.hex`のローダ部分のソース復元とビルド手順
 * CMTからWAVへの変換手順
 * MIFの作成手順
 * 既存成果物を版管理に残す範囲(オリジナル由来の成果物は専用ディレクトリへ保存する方針)
