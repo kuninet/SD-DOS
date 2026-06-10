@@ -1,0 +1,12 @@
+# ビルド中間・生成物
+/build/
+
+# 外部ツール本体(入手方法はtools/README.mdを参照)
+/tools/*
+!/tools/README.md
+
+# tools80がソースの隣に出力する一時ファイル
+/src/*.cmt
+/src/*.hex
+/src/*.raw
+/src/*.log.*
