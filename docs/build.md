@@ -7,7 +7,7 @@
 `tools/tools80.jar`を配置したうえで(入手方法は`tools/README.md`を参照)、Makefileでビルドする。
 
 ```sh
-make          # build/ に MAIN.cmt、IPL.cmt、64KRAM.hex を生成する
+make          # build/ に MAIN.cmt、IPL.cmt、64KRAM.hex、SDUMP.cmt を生成する
 make test     # 回帰テスト(複数クラスタ読みとストリーム読み出しAPI)を実行する
 make list     # アセンブルリスト(MAIN.asm.log.asz)とシンボル(MAIN.sym)を build/ に生成する
 make verify-orig  # オリジナル成果物とのバイト一致確認(複数クラスタ読み修正前のコード専用)
@@ -96,6 +96,7 @@ ROMライタ、FPGA書き込み、実機ロードはビルドとは別作業と�
 確認済みのビルド手順に基づき、次の構成に整理した。
 
 * `src/`: アセンブリソース(`INCLUDE`はソースのあるディレクトリ基準で解決される)
+* `samples/`: ストリーム読み出しAPIの利用サンプル
 * `docs/`: ビルド手順(この文書)
 * `docs/design/`: 調査と設計の文書
 * `scripts/`: ビルド補助スクリプト

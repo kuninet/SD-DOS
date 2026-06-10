@@ -20,7 +20,7 @@ ASM = printf 'OK\n' | $(JAVA) -jar $(TOOLS80) -tgt=z80
 
 ASM_SRCS = $(wildcard src/*.asm)
 
-all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex
+all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt
 
 $(BUILD)/MAIN.cmt: $(ASM_SRCS) | $(BUILD)
 	$(ASM) src/MAIN.asm
@@ -41,6 +41,14 @@ $(BUILD)/LOADER64.hex: src/LOADER64.asm | $(BUILD)
 $(BUILD)/64KRAM.hex: $(BUILD)/LOADER64.hex $(BUILD)/MAIN.hex scripts/make64kram.py
 	$(PYTHON) scripts/make64kram.py $(BUILD)/LOADER64.hex $(BUILD)/MAIN.hex -o $@
 
+$(BUILD)/SDUMP.cmt: samples/SDUMP.asm | $(BUILD)
+	$(ASM) samples/SDUMP.asm
+	mv samples/SDUMP.cmt $@
+
+$(BUILD)/SDUMP.raw: samples/SDUMP.asm | $(BUILD)
+	$(ASM) -raw samples/SDUMP.asm
+	mv samples/SDUMP.raw $@
+
 # -debugでアセンブルリスト(.log.asz)とシンボル(.sym)、-rawでベタイメージも生成する
 $(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
 	$(ASM) -raw -debug -sym src/MAIN.asm
@@ -50,9 +58,10 @@ $(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
 
 list: $(BUILD)/MAIN.raw
 
-test: $(BUILD)/MAIN.raw
+test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw
 	$(PYTHON) scripts/test_multicluster.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym
 	$(PYTHON) scripts/test_stream_api.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym
+	$(PYTHON) scripts/test_sample.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/SDUMP.raw
 
 # オリジナル再現の確認用。複数クラスタ読みのバグ修正以降のコードでは一致しない
 verify-orig: all
