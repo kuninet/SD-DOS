@@ -10,3 +10,6 @@
 /src/*.hex
 /src/*.raw
 /src/*.log.*
+
+# Python
+__pycache__/

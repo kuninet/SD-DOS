@@ -48,12 +48,11 @@ IS_FP_OFST_ZERO:
 
 ;=================================================
 ;[FP]FP関連ワークからセクタ＃を求める
-;IN (FP_CLSTR),(FP_CLSTR_SN),(FP_SCTR_SN)
+;IN (FP_CLSTR),(FP_SCTR_SN)
 ;OUT (DW0)
 ;=================================================
 FP2SCTR:
-	CALL	GET_FP_CLSTR			;DE<-FPが存在するクラスタ＃
-	EX	DE,HL				;HL<-FPが存在するクラスタ＃
+	LD	HL,(FP_CLSTR)			;HL<-FPが存在するクラスタ＃（カレントクラスタ）
 	CALL	GET_FIRST_SCTR			;(DW0)<-FPが存在するクラスタの開始セクタ＃
 	LD	HL,DW1				;(DW1)<-00000000H
 	CALL	DW_CLR				;
@@ -297,6 +296,7 @@ SET_FP_END:
 	CALL	DW_COPY				;FP<-(ファイルサイズ)=ファイルの終端位置
 	CALL	PARSE_FP			;FPから(FP_CLSTR_SN),(FP_SCTR_SN)を求める
 	CALL	GET_FP_CLSTR			;DE<-FPが存在するクラスタ＃,HL<-そのFATエントリ
+	LD	(FP_CLSTR),DE			;(FP_CLSTR)<-FPが存在するクラスタ＃　カレントクラスタ規約に揃える
 	INC	HL				;FATの値がFFFFH（ファイル終端）ならZ=1になる！INC命令はフラグ変化しない！
 	LD	A,H				;
 	OR	L				;
