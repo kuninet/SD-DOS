@@ -1,29 +1,28 @@
 # ビルド手順とディレクトリ構成の整理方針
 
 ## 目的
-この文書は、SD-DOSの現状のビルド手順、成果物、外部ツール、今後のディレクトリ構成整理方針をまとめる。
+この文書は、SD-DOSのビルド手順、成果物、外部ツール、ディレクトリ構成をまとめる。
 
-現時点では、リポジトリ直下にアセンブリソース、ログ、CMT、WAV、HEX、MIFが並んでいる。まずは各ファイルの位置づけを明確にし、macOSでも追跡しやすい形へ段階的に整理する。
-
-## 確認済みのビルド手順
-tools80(Release 6.50、Ver 6.6.68)で次のコマンドによりアセンブルできることを確認した。アセンブル対象の指定オプションは`-tgt=z80`である(READMEの旧記載`-tgt:z80`は誤りだったため修正済み)。
+## ビルド手順
+`tools/tools80.jar`を配置したうえで(入手方法は`tools/README.md`を参照)、Makefileでビルドする。
 
 ```sh
-java -jar tools80.jar -tgt=z80 MAIN.asm
-java -jar tools80.jar -tgt=z80 IPL.asm
+make          # build/ に MAIN.cmt、IPL.cmt、64KRAM.hex を生成する
+make verify   # 生成物が dist/original/ のオリジナル成果物とバイト一致するか確認する
+make clean    # build/ を削除する
 ```
 
-出力は無指定でMONITOR形式のCMTファイルになり、`MAIN.cmt`、`IPL.cmt`ともリポジトリの既存成果物とバイト一致することを確認した。`-hex`(Intel HEX)、`-raw`(ベタイメージ)、`-debug`(ログ出力)のオプションも使える。
+Javaのパスは`make JAVA=/path/to/java`のように変数で指定できる。tools80(Release 6.50、Ver 6.6.68)で、3つの成果物すべてがオリジナルとバイト一致することを確認済みである。
 
-`64KRAM.hex`は、復元したローダソース`LOADER64.asm`と`MAIN.asm`のアセンブル結果を合成して生成する。生成結果が既存成果物とバイト一致することを確認した。
+tools80を直接実行する場合は次のとおり。アセンブル対象の指定オプションは`-tgt=z80`である。出力はソースファイルと同じディレクトリ(`src/`)に書かれる。
 
 ```sh
-java -jar tools80.jar -tgt=z80 -hex LOADER64.asm
-java -jar tools80.jar -tgt=z80 -hex MAIN.asm
-python3 scripts/make64kram.py LOADER64.hex MAIN.hex -o 64KRAM.hex
+java -jar tools/tools80.jar -tgt=z80 src/MAIN.asm
 ```
 
-`MAIN.asm`の出力には`EXT.asm`由来の`0C000H`ブロック(拡張コマンド)も含まれるが、EPROMイメージには`6000H`〜`7FFFH`の範囲だけを合成する。本体のコード長がローダのコピー長`BODY_LEN`(`18F0H`)を超えた場合は、`LOADER64.asm`と`scripts/make64kram.py`の両方の定数を更新する必要がある(スクリプトがエラーで検出する)。
+出力は無指定でMONITOR形式のCMTファイルになり、`-hex`(Intel HEX)、`-raw`(ベタイメージ)、`-debug`(ログ出力)のオプションも使える。tools80は実行中に`type 'OK'`の確認入力を求めることがあるため、Makefileでは`printf 'OK\n'`を標準入力へ渡している。
+
+`64KRAM.hex`は、復元したローダソース`src/LOADER64.asm`と`src/MAIN.asm`のアセンブル結果(Intel HEX)を`scripts/make64kram.py`で合成して生成する(`make`が自動で行う)。`MAIN.asm`の出力には`EXT.asm`由来の`0C000H`ブロック(拡張コマンド)も含まれるが、EPROMイメージには`6000H`〜`7FFFH`の範囲だけを合成する。本体のコード長がローダのコピー長`BODY_LEN`(`18F0H`)を超えた場合は、`LOADER64.asm`と`scripts/make64kram.py`の両方の定数を更新する必要がある(スクリプトがエラーで検出する)。
 
 `MAIN.asm.log.asz`の先頭には`Asm2Hex : Version 0.7.2`とあり、原作者は古い版のtools80を使っていたと見られるが、現行のr6_50で同一の出力が得られる。
 
@@ -43,8 +42,8 @@ python3 scripts/make64kram.py LOADER64.hex MAIN.hex -o 64KRAM.hex
 * macOSではHomebrewの`openjdk`(管理者権限不要)で確認した。`/opt/homebrew/opt/openjdk/bin/java`
 * `.lzh`の展開もHomebrewの`lhasa`で確認した(`lha x tools80_r6_50.lzh`)
 
-## 現在確認できる成果物
-リポジトリ直下には、次の成果物がある。
+## オリジナル由来の成果物
+オリジナルリポジトリ由来のビルド成果物は、自前ビルドの成果物(`build/`、git管理外)と区別するため、`dist/original/`に保存している。
 
 * `64KRAM.hex`
 * `MAIN.cmt`
@@ -89,33 +88,19 @@ Quartus Prime系のMemory Initialization File。`WIDTH=8`、`DEPTH=8192`であ�
 
 ROMライタ、FPGA書き込み、実機ロードはビルドとは別作業として扱う。
 
-## Makefile化の方針
-Makefileを追加する場合は、最初から全成果物を扱わず、確認済みの手順を薄く包むところから始める。未確認の工程はターゲット化しない。
+## ディレクトリ構成
+確認済みのビルド手順に基づき、次の構成に整理した。
 
-段階的なターゲット案:
+* `src/`: アセンブリソース(`INCLUDE`はソースのあるディレクトリ基準で解決される)
+* `docs/`: ビルド手順(この文書)
+* `docs/design/`: 調査と設計の文書
+* `scripts/`: ビルド補助スクリプト
+* `tools/`: 手元に配置する外部ツール(ツール本体はgit管理外)
+* `build/`: ビルド生成物(git管理外)
+* `dist/original/`: オリジナルリポジトリ由来の成果物
 
-* 最初は`MAIN.asm`のアセンブルだけを対象にする
-* Intel HEX相当の出力を確認できたら、HEX用のターゲットを検討する
-* CMT、WAV、MIFは作成方法が確認できてから個別に検討する
-* 中間ファイルの扱いが決まったら、削除用ターゲットを検討する
-
-未確認の外部ツールが必要な工程は、Makefileに入れる前に手順と配置場所を決める。
-
-## ディレクトリ構成整理の方針
-すぐにソースや成果物を移動せず、ビルド手順が確認できてから段階的に整理する。
-
-将来の候補:
-
-* `src/asm/`: アセンブリソース
-* `docs/`: 仕様、調査、手順
-* `tools/`: 手元に配置する外部ツール
-* `build/`: 中間ファイル
-* `dist/`: 配布対象の完成物
-
-既存の`INCLUDE`指定や外部ツールの相対パス挙動が未確認のため、ディレクトリ移動はビルド手順を確認した後に行う。
+確認済みの工程(CMT、64KRAM.hex)だけをMakefileのターゲットにしている。WAV、MIFは作成方法が確認できてから個別に検討する。
 
 ## 今後の確認事項
 * CMTからWAVへの変換手順
 * MIFの作成手順
-* 既存成果物を版管理に残す範囲(オリジナル由来の成果物は専用ディレクトリへ保存する方針)
-* 最終的なディレクトリ構成
