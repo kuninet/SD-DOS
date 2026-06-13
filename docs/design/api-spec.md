@@ -69,6 +69,15 @@ SDアクセス異常、FATリンク異常は初期実装では既存どおり非
 
 **動作**: STRM_STATを「未オープン」にする。読み出し専用のためバッファの書き戻しは不要。
 
+## SDアクセス音の抑止
+
+SD-DOSはSDアクセスのたびに`MMC_LED_ON`から疑似アクセス音(`MMC_SOUND`、ポート40H)を鳴らすため、VGM再生中はセクタ読み込みごとにこの音が演奏へ混ざる。これを避けるため、実行時ミュートフラグ`SD_SND_OFF`を設け、`MMC_LED_ON`の`MMC_SOUND`呼び出しをゲートする。
+
+- `STRM_OPEN`の先頭で`SD_SND_OFF`を立て、オープン中(ディレクトリ検索・データ読みを含む)のアクセス音を抑止する
+- `STRM_CLOSE`およびオープン失敗(NOTFOUND)経路で`SD_SND_OFF`を戻す
+- 起動時(INIT)で0に初期化する
+- `USE_VIRTUAL_SOUND`はTRUEのまま。通常操作(LOAD/FILESなど)のアクセス音は従来どおり鳴る
+
 ## 状態ワーク
 
 MAIN.asmのワークエリア末尾に追加する(DS領域のため本体のコード長は増えない)。
@@ -77,6 +86,7 @@ MAIN.asmのワークエリア末尾に追加する(DS領域のため本体のコ
 |---|---|---|
 | STRM_REMAIN | 4バイト | 残りバイト数。オープン時にDIR_ENTRYのファイルサイズで初期化 |
 | STRM_STAT | 1バイト | 00H=未オープン、01H=読み出し中、02H=EOF到達 |
+| SD_SND_OFF | 1バイト | 0=アクセス音を鳴らす(通常)、非0=抑止(ストリーム読み出し中) |
 
 既存のFP系ワーク(FP、FP_CLSTR、FP_SCTR_SN)とFILE_BFFR/FILE_BFFR_STRCTをそのまま使う([ストリーム読み出しの状態管理](seq-read-state.md))。
 
@@ -93,6 +103,8 @@ MAIN.asmのワークエリア末尾に追加する(DS領域のため本体のコ
 - **STRM_CLOSE**: 状態のクリア
 
 **再利用(変更しない)**: CHANGE_WDIR、GET_DENT、RESTORE_WDIR、PREP_READ(INIT_FP、READ_FP_SCTRを含む)、FP2BP、INC_FP(NEXT_CLSTR、LOAD_BFFRを含む)、DWORD演算
+
+**変更**: `MMC_LED_ON`(MMC.asm)に`SD_SND_OFF`によるアクセス音ゲートを追加(フラグ0なら従来挙動。上記「SDアクセス音の抑止」を参照)
 
 PREP_READが行うIS_CALLBACKのクリアは、CMT読み込み向けフラグの初期化であり、ストリーム読み出しでは無害である。
 

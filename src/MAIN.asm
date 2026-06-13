@@ -41,6 +41,7 @@ endif
 	CALL	CMD_ON				;ƒCƒ“ƒtƒHƒ[ƒVƒ‡ƒ“ƒXƒCƒbƒ`
 	XOR	A				;ƒXƒgƒŠ[ƒ€“Ç‚Ýo‚µ‚ð–¢ƒI[ƒvƒ“‚É‚·‚é
 	LD	(STRM_STAT),A			;
+	LD	(SD_SND_OFF),A			;ƒAƒNƒZƒX‰¹—}Ž~ƒtƒ‰ƒO‰Šú‰»
 
 	LD	HL,MSG_TITLE			;ƒ^ƒCƒgƒ‹•\Ž¦
 	CALL	PRINT				;
@@ -272,6 +273,7 @@ FP_CLSTR_SN:	DS	02H			;FP‚ªŽ¦‚·ƒAƒhƒŒƒX‚ªAæ“ª‚©‚ç‰½”Ô–Ú‚ÌƒNƒ‰ƒXƒ^‚ÉŠÜ‚Ü‚ê‚é‚©‚
 FP_SCTR_SN:	DS	01H			;FP‚ªŽ¦‚·ƒAƒhƒŒƒX‚ªAƒNƒ‰ƒXƒ^“à‚Ì‰½”Ô–Ú‚ÌƒZƒNƒ^‚ÉŠÜ‚Ü‚ê‚é‚©‚ðŽ¦‚·IƒZƒNƒ^”‚Å‚Í‚È‚¢I
 STRM_REMAIN:	DS	04H			;ƒXƒgƒŠ[ƒ€“Ç‚Ýo‚µ‚ÌŽc‚èƒoƒCƒg”
 STRM_STAT:	DS	01H			;ƒXƒgƒŠ[ƒ€“Ç‚Ýo‚µ‚Ìó‘Ô 00H=–¢ƒI[ƒvƒ“,01H=“Ç‚Ýo‚µ’†,02H=EOF“ž’B
+SD_SND_OFF:	DS	01H			;ƒXƒgƒŠ[ƒ€“Ç‚Ýo‚µ’†‚ÌSDƒAƒNƒZƒX‰¹—}Ž~ 0=–Â‚ç‚·,”ñ0=—}Ž~
 
 ATRB:		DS	01H			;ƒtƒ@ƒCƒ‹‘®«•\Ž¦—p•¶Žš—ñ‚Ì•¶Žš”Žw’è•”
 		DS	06H			;ƒtƒ@ƒCƒ‹‘®«•\Ž¦—p•¶Žš—ñ–{‘Ì

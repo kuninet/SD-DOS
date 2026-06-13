@@ -442,7 +442,9 @@ MMC_LED_ON:
 	OUT	(PPI_B),A
 
 IF USE_VIRTUAL_SOUND
-	CALL	MMC_SOUND
+	LD	A,(SD_SND_OFF)		;ストリーム読み出し中は疑似音を鳴らさない
+	OR	A
+	CALL	Z,MMC_SOUND
 ENDIF
 
 	LD	A,(INFO_SW)			;インフォメーションフラグが降りていたら戻る
