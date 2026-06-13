@@ -661,7 +661,13 @@ READ_NUM:
 	CALL	KEYWAIT
 	POP	HL
 	CP	CR
-	RET	Z
+	JR	NZ,.chk			;Enter以外は数字判定へ
+	LD	A,CR			;Enter:改行してから戻る(再生開始前)
+	RST	18H
+	LD	A,LF
+	RST	18H
+	RET
+.chk:	
 	CP	30H
 	JR	C,.k
 	CP	3AH
