@@ -22,9 +22,9 @@ OPN_ADDR	EQU	80H		;YM2203 レジスタ番号/ステータス
 OPN_DATA	EQU	81H		;YM2203 データ
 PSG_ADDR	EQU	0A0H		;PSG#1 レジスタ番号
 PSG_DATA	EQU	0A1H		;PSG#1 データ
-WAIT_K	EQU	5		;1サンプル（約22.7マイクロ秒）の内側ループ回数 ！実機で調整！
-READ_SAMP	EQU	9		;SD読み1バイトの所要(サンプル換算)。実機で調整
-WRITE_COST	EQU	5		;音源書き込み1回の処理時間(サンプル換算)。実機で調整
+WAIT_K	EQU	2		;1サンプルの内側ループ回数(実機調整値)。POKE &H9003
+READ_SAMP	EQU	20		;SD読み1バイトの所要(サンプル換算)。POKE &H9004
+WRITE_COST	EQU	20		;音源書き込み1回の処理時間(サンプル換算)。POKE &H9005
 CR	EQU	0DH		;
 RBUF_SIZE	EQU	1000H		;先読みリングバッファのサイズ（4KB。貯金枠）
 
