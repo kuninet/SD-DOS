@@ -24,6 +24,7 @@ PSG_ADDR	EQU	0A0H		;PSG#1 レジスタ番号
 PSG_DATA	EQU	0A1H		;PSG#1 データ
 WAIT_K	EQU	5		;1サンプル（約22.7マイクロ秒）の内側ループ回数 ！実機で調整！
 READ_SAMP	EQU	9		;SD読み1バイトの所要(サンプル換算)。実機で調整
+WRITE_COST	EQU	5		;音源書き込み1回の処理時間(サンプル換算)。実機で調整
 CR	EQU	0DH		;
 RBUF_SIZE	EQU	1000H		;先読みリングバッファのサイズ（4KB。貯金枠）
 
@@ -32,7 +33,7 @@ RBUF_SIZE	EQU	1000H		;先読みリングバッファのサイズ（4KB。貯金枠）
 	JP	START			;9000H 実行エントリ(CMD Rでここへ来る)
 WAIT_KV:	DB	WAIT_K		;9003H ウェイト係数。POKE &H9003,n で実機調整可能
 READ_SAMPV:	DB	READ_SAMP	;9004H SD読みコスト補正(POKE可。大きいほど速い)
-	DB	0			;9005H 予約
+WRITE_COSTV:	DB	WRITE_COST	;9005H 書込処理コスト補正(POKE可。大きいほど密小節を詰める)
 
 START:
 	LD	(SAVSP),SP		;異常終了時の脱出用にSPを保存する
@@ -160,12 +161,14 @@ PLAY:
 	LD	A,(FNAME)		;レジスタ選択後の短い待ち（ダミー読み）
 	LD	A,B			;データ値を出力
 	OUT	(OPN_DATA),A		;
+	CALL	ADD_DEBT			;処理時間debtを加算
 	JR	.LOOP			;
 
 .PSG:	CALL	GETB			;レジスタ番号を出力
 	OUT	(PSG_ADDR),A		;
 	CALL	GETB			;データ値を出力
 	OUT	(PSG_DATA),A		;
+	CALL	ADD_DEBT			;処理時間debtを加算
 	JR	.LOOP			;
 
 .W61:	CALL	GETB			;DE<-サンプル数
@@ -308,6 +311,26 @@ GETB:	PUSH	HL			;HL/DE/BCを保存（呼び出し側がHL等を使う）
 ;IN  DE=サンプル数
 ;-------------------------------------------------
 WAIT_DE:
+;処理時間debt(音源書き込み等)を先に差し引き、密な小節の詰まりを均す
+	PUSH	DE			;元ウェイトを退避
+	LD	HL,(WDEBT)		;DE = ウェイト - WDEBT
+	LD	A,E			;
+	SUB	L			;
+	LD	E,A			;
+	LD	A,D			;
+	SBC	A,H			;
+	LD	D,A			;
+	JR	C,.DEBTOVER		;WDEBT>ウェイト:全部debtで消化
+	POP	HL			;退避ウェイト破棄(DE=残りウェイト)
+	LD	HL,0			;debt完済
+	LD	(WDEBT),HL		;
+	JR	.FILL			;残りを通常処理
+.DEBTOVER:	LD	HL,(WDEBT)		;新WDEBT = WDEBT - 元ウェイト
+	POP	DE			;DE=元ウェイト
+	OR	A			;CY=0
+	SBC	HL,DE			;
+	LD	(WDEBT),HL		;
+	RET				;ウェイトはdebtで完済
 ;I/Oインターリーブ:長いウェイト中にSD先読みを行い読み込み時間を隠す
 ;短いウェイトは先読みを挟まず正確に刻む(読み1回での水増しを防ぎ音価を保つ)
 .FILL:	LD	A,D			;残ウェイト=0なら終了
@@ -347,12 +370,29 @@ WAIT_DE:
 ;先読みリングバッファ（SD読み込み遅延をウェイト中に隠す）
 ;-------------------------------------------------
 ;[RB]初期化
+;-------------------------------------------------
+;処理時間debtにWRITE_COSTを加算(音源書き込み1回分)
+;-------------------------------------------------
+ADD_DEBT:
+	PUSH	HL			;
+	PUSH	BC			;
+	LD	HL,(WDEBT)		;
+	LD	A,(WRITE_COSTV)		;
+	LD	C,A			;
+	LD	B,0			;
+	ADD	HL,BC			;
+	LD	(WDEBT),HL		;
+	POP	BC			;
+	POP	HL			;
+	RET				;
+
 RB_INIT:
 	LD	HL,RBUF			;
 	LD	(RB_RDP),HL		;読み書きポインタを先頭へ
 	LD	(RB_WRP),HL		;
 	LD	HL,0			;
 	LD	(RB_CNT),HL		;バイト数=0
+	LD	(WDEBT),HL		;処理時間debt=0
 	XOR	A			;
 	LD	(RB_EOF),A		;終端フラグ=0
 	RET				;
@@ -487,5 +527,6 @@ RB_RDP:		DS	2		;読み出しポインタ
 RB_WRP:		DS	2		;書き込みポインタ
 RB_CNT:		DS	2		;バッファ内バイト数（0～RBUF_SIZE）
 RB_EOF:		DS	1		;先読みが終端に達したら非0
+WDEBT:		DS	2		;処理時間debt(サンプル)
 
 	END
