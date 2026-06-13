@@ -10,7 +10,9 @@
 ;・対象のファイル名はFNAME（本ソース末尾）を書き換えてアセンブルする
 ;・ヘッダ解析範囲は docs/vgm/header.md、コマンドと読み飛ばし規則は
 ;  docs/vgm/commands.md、音源の書き込み手順は docs/vgm/sound-io.md を参照
-;・タイミングはビジーループ近似。WAIT_Kを実機の聴感で調整する
+;・タイミングはビジーループ近似。テンポは WAIT_K(既定値)で決まる
+;・実機調整: LOAD後 POKE &H9003,n (n=1～255 小さいほど速い)してから CMD R で再生
+;  9003H は WAIT_KV(ウェイト係数)の固定アドレス
 ;=================================================
 
 STRM_OPEN	EQU	6005H		;ストリームを開く
@@ -22,8 +24,13 @@ PSG_ADDR	EQU	0A0H		;PSG#1 レジスタ番号
 PSG_DATA	EQU	0A1H		;PSG#1 データ
 WAIT_K	EQU	5		;1サンプル（約22.7マイクロ秒）の内側ループ回数 ！実機で調整！
 CR	EQU	0DH		;
+RBUF_SIZE	EQU	1000H		;先読みリングバッファのサイズ（4KB。貯金枠）
 
 	ORG	09000H
+
+	JP	START			;9000H 実行エントリ(CMD Rでここへ来る)
+WAIT_KV:	DB	WAIT_K		;9003H ウェイト係数。POKE &H9003,n で実機調整可能
+	DB	0,0			;9004H,9005H 予備
 
 START:
 	LD	(SAVSP),SP		;異常終了時の脱出用にSPを保存する
@@ -33,7 +40,9 @@ START:
 	LD	HL,MSG_NF		;見つからなければメッセージを表示して終了
 	JP	PUTS			;
 
-.OK:	CALL	PARSE_HDR		;ヘッダを解析してデータ開始位置まで進める
+.OK:	CALL	RB_INIT			;リングバッファ初期化
+	CALL	PARSE_HDR		;ヘッダを解析してデータ開始位置まで進める
+	CALL	RB_REFILL		;再生開始前にバッファをプライム
 	JP	PLAY			;再生ループへ
 
 ;-------------------------------------------------
@@ -271,24 +280,132 @@ SKIP:	LD	A,D			;
 ;１バイト取得（EOFは再生終了として扱う）
 ;OUT A=取得した値
 ;-------------------------------------------------
-GETB:	CALL	STRM_READ		;
-	RET	NC			;
-	JP	DONE			;EOF（A=00H）。A=01H（未オープン）は起きない
+GETB:	PUSH	HL			;HL/DE/BCを保存（呼び出し側がHL等を使う）
+	PUSH	DE			;
+	PUSH	BC			;
+	CALL	RB_GET			;リングバッファから取得
+	JR	NC,.GOT			;取得できた
+	LD	A,(RB_EOF)		;バッファ空。先読みが終端に達していれば
+	OR	A			;
+	JR	NZ,.EOF			;再生終了へ
+	CALL	STRM_READ		;フォールバック：直接読み（空かつ未終端）
+	JR	C,.RDEOF		;
+.GOT:	POP	BC			;
+	POP	DE			;
+	POP	HL			;
+	RET				;A=取得した値
+.RDEOF:	LD	A,0FFH			;直接読みでEOF
+	LD	(RB_EOF),A		;
+.EOF:	POP	BC			;
+	POP	DE			;
+	POP	HL			;
+	JP	DONE			;EOFは再生終了として扱う
 
 ;-------------------------------------------------
 ;サンプル数ぶんのウェイト
 ;IN  DE=サンプル数
 ;-------------------------------------------------
 WAIT_DE:
+	CALL	RB_REFILL		;ウェイトの空き時間に先読みする
 	LD	A,D			;
 	OR	E			;
 	RET	Z			;
-.L:	LD	B,WAIT_K		;
+.L:	LD	A,(WAIT_KV)		;ウェイト係数(実機POKEで可変)
+	LD	B,A			;
 .W:	DJNZ	.W			;
 	DEC	DE			;
 	LD	A,D			;
 	OR	E			;
 	JR	NZ,.L			;
+	RET				;
+
+
+;-------------------------------------------------
+;先読みリングバッファ（SD読み込み遅延をウェイト中に隠す）
+;-------------------------------------------------
+;[RB]初期化
+RB_INIT:
+	LD	HL,RBUF			;
+	LD	(RB_RDP),HL		;読み書きポインタを先頭へ
+	LD	(RB_WRP),HL		;
+	LD	HL,0			;
+	LD	(RB_CNT),HL		;バイト数=0
+	XOR	A			;
+	LD	(RB_EOF),A		;終端フラグ=0
+	RET				;
+
+;[RB]1バイト格納（満タンでないこと） IN A=値
+RB_PUT:
+	PUSH	HL			;
+	PUSH	DE			;
+	LD	HL,(RB_WRP)		;
+	LD	(HL),A			;格納
+	INC	HL			;
+	LD	DE,RBUF_END		;末尾なら先頭へラップ
+	LD	A,H			;
+	CP	D			;
+	JR	NZ,.NW			;
+	LD	A,L			;
+	CP	E			;
+	JR	NZ,.NW			;
+	LD	HL,RBUF			;
+.NW:	LD	(RB_WRP),HL		;
+	LD	HL,(RB_CNT)		;バイト数++
+	INC	HL			;
+	LD	(RB_CNT),HL		;
+	POP	DE			;
+	POP	HL			;
+	RET				;
+
+;[RB]1バイト取得 OUT A=値,CY=0 / CY=1:空
+;！BC/DE/HLを壊す（呼び出し側GETBが保存している）
+RB_GET:
+	LD	HL,(RB_CNT)		;
+	LD	A,H			;
+	OR	L			;
+	SCF				;空ならCY=1
+	RET	Z			;
+	LD	HL,(RB_RDP)		;
+	LD	B,(HL)			;値→B
+	INC	HL			;
+	LD	DE,RBUF_END		;末尾なら先頭へラップ
+	LD	A,H			;
+	CP	D			;
+	JR	NZ,.NW			;
+	LD	A,L			;
+	CP	E			;
+	JR	NZ,.NW			;
+	LD	HL,RBUF			;
+.NW:	LD	(RB_RDP),HL		;
+	LD	HL,(RB_CNT)		;バイト数--
+	DEC	HL			;
+	LD	(RB_CNT),HL		;
+	LD	A,B			;値→A
+	OR	A			;CY=0
+	RET				;
+
+;[RB]空き時間にバッファを満タンまで先読みする
+RB_REFILL:
+	LD	A,(RB_EOF)		;既に終端なら何もしない
+	OR	A			;
+	RET	NZ			;
+	PUSH	BC			;
+	PUSH	DE			;DEはWAIT_DEのサンプル数。保存必須
+	PUSH	HL			;
+.R:	LD	HL,(RB_CNT)		;CNT>=RBUF_SIZE なら満タン
+	LD	DE,RBUF_SIZE		;
+	OR	A			;CY=0
+	SBC	HL,DE			;
+	JR	NC,.FULL		;
+	CALL	STRM_READ		;1バイト先読み
+	JR	C,.EOF			;CY=1:終端
+	CALL	RB_PUT			;バッファへ
+	JR	.R			;
+.EOF:	LD	A,0FFH			;終端フラグを立てる
+	LD	(RB_EOF),A		;
+.FULL:	POP	HL			;
+	POP	DE			;
+	POP	BC			;
 	RET				;
 
 ;-------------------------------------------------
@@ -317,5 +434,11 @@ MSG_END:
 
 SAVSP:	DS	2			;SP退避
 BLKSZ:	DS	4			;データブロックの残りサイズ
+RBUF:		DS	RBUF_SIZE	;先読みリングバッファ
+RBUF_END	EQU	$		;バッファ末尾＋1
+RB_RDP:		DS	2		;読み出しポインタ
+RB_WRP:		DS	2		;書き込みポインタ
+RB_CNT:		DS	2		;バッファ内バイト数（0～RBUF_SIZE）
+RB_EOF:		DS	1		;先読みが終端に達したら非0
 
 	END
