@@ -13,6 +13,8 @@
 STRM_OPEN:
 	XOR	A				;いったん未オープンにする（オープン中なら暗黙クローズ）
 	LD	(STRM_STAT),A			;
+	LD	A,0FFH			;ストリーム中はSDアクセス音を抑止
+	LD	(SD_SND_OFF),A		;
 	LD	(ARG0),HL			;(ARG0)<-パス文字列の先頭アドレス
 	CALL	CHANGE_WDIR			;パス部があればディレクトリを移動 HL<-エントリ名の先頭
 	LD	C,ATRB_FILE			;ファイル属性で
@@ -31,6 +33,8 @@ STRM_OPEN:
 	RET					;
 
 .NOTFOUND:
+	XOR	A				;オープン失敗：アクセス音を戻す
+	LD	(SD_SND_OFF),A		;
 	CALL	RESTORE_WDIR			;
 	LD	A,01H				;エントリが見つからない
 	SCF					;CY<-1
@@ -106,6 +110,7 @@ IS_REMAIN_ZERO:
 STRM_CLOSE:
 	XOR	A				;未オープンにする CY<-0
 	LD	(STRM_STAT),A			;
+	LD	(SD_SND_OFF),A		;アクセス音を戻す
 	RET					;
 
 ;=================================================

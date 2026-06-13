@@ -142,6 +142,7 @@ def main():
     set_fname(cpu, "TEST.VGM")
     cpu.call(STRM_OPEN)
     check(results, "オープン成功(CY=0)", not cpu.f & CY)
+    check(results, "オープン中はアクセス音抑止ON", cpu.mem[syms["SD_SND_OFF"]] != 0)
     got = bytearray()
     try:
         for _ in range(size):
@@ -160,6 +161,7 @@ def main():
     check(results, "EOF後の再呼び出しもCY=1,A=00H", bool(cpu.f & CY) and cpu.a == 0)
     cpu.call(STRM_CLOSE)
     check(results, "クローズ成功(CY=0)", not cpu.f & CY)
+    check(results, "クローズでアクセス音抑止OFF", cpu.mem[syms["SD_SND_OFF"]] == 0)
     cpu.call(STRM_READ)
     check(results, "クローズ後はCY=1,A=01H(未オープン)", bool(cpu.f & CY) and cpu.a == 1)
 
@@ -170,6 +172,7 @@ def main():
     cpu.call(STRM_OPEN)
     check(results, "CY=1,A=01H(見つからない)", bool(cpu.f & CY) and cpu.a == 1,
           f"CY={cpu.f & CY} A={cpu.a:02X}")
+    check(results, "オープン失敗でアクセス音抑止OFF", cpu.mem[syms["SD_SND_OFF"]] == 0)
 
     # ケース3: クラスタ境界ちょうどで終わるファイル(既存経路ではエラーになる条件)
     print("=== ケース3: クラスタ境界ちょうどで終わるファイル")
