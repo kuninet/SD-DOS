@@ -2,13 +2,13 @@
 ;PC-8001 SD-DOS 64KB RAM版ローダ
 ;=================================================
 ;・64KRAM.hex(EPROM 6000H-7FFFH用)の先頭に置くローダ
-;・転送ルーチンを高位RAM(0EDCEH)へコピーしてから実行する
+;・転送ルーチンを高位RAM(0D000H)へコピーしてから実行する
 ;・BASIC ROM(0000H-5FFFH)とSD-DOS本体を裏RAMへコピーし、
 ;  バンクを切り替えたうえで6000Hから起動する
 ;・SD-DOS本体(MAIN.asmの出力)はBODY(604CH)以降に合成して配置する
 ;  合成手順は scripts/make64kram.py と docs/build.md を参照
 
-RELOC	EQU	0EDCEH			;転送ルーチンの実行アドレス
+RELOC	EQU	0D000H			;転送ルーチンの実行アドレス
 BANK	EQU	0E2H			;拡張RAMバンク制御ポート
 
 	ORG	06000H
