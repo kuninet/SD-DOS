@@ -32,7 +32,8 @@ KEYWAIT	EQU	0F75H		;1文字入力待ち A<-コード
 STRM_DIRLIST	EQU	600EH		;ディレクトリ列挙(全ファイル名を一括取得)
 MAXFILES	EQU	40H		;一覧の最大ファイル数(64)
 BUSY_MAX	EQU	00H		;YM2203 BUSY待ち上限(0=無制限)。POKE &H9006
-RBUF_SIZE	EQU	1000H		;先読みリングバッファのサイズ（4KB。貯金枠）
+RBUF_SIZE	EQU	4000H		;先読みリングバッファ(16KB。後半の枯渇対策)
+INITFILL	EQU	2000H		;起動時の部分プリフィル(8KB。残りは再生中に育てる)
 
 	ORG	09000H
 
@@ -498,6 +499,17 @@ RB_REFILL:
 	RET				;
 
 ;[RB]満タンでなければ1バイトだけ先読み OUT CY=1:読んで格納 / CY=0:満タンorEOF
+
+;[RB]起動時の部分プリフィル(INITFILLバイトまで先読み。残りは再生中に育てる)
+RB_PREFILL:
+.pf:	CALL	RB_TRYFILL1		;1バイト先読み(CY=1で読んだ)
+	JR	NC,.done		;満タン/EOF
+	LD	HL,(RB_CNT)		;CNT>=INITFILLなら打ち切り
+	LD	DE,INITFILL
+	OR	A
+	SBC	HL,DE
+	JR	C,.pf			;まだ→続行
+.done:	RET
 RB_TRYFILL1:
 	LD	A,(RB_EOF)		;既に終端なら何もしない
 	OR	A			;
@@ -535,7 +547,7 @@ PLAY_FILE:
 	LD	(PLAYSP),SP		;再生中の脱出点(DONE/ABORTがここへ戻す)
 	CALL	RB_INIT
 	CALL	PARSE_HDR
-	CALL	RB_REFILL
+	CALL	RB_PREFILL		;部分プリフィル(起動を速く)
 	JP	PLAY
 .nf:	LD	HL,MSG_NF
 	CALL	PUTS
