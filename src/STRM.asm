@@ -216,3 +216,96 @@ STRM_RSVD:
 	LD	A,0FFH			;未実装
 	SCF				;
 	RET				;
+
+;=================================================
+;[STRM]ディレクトリ列挙: 現在WDIRのN番目のファイルエントリ名を返す
+;IN  DE=インデックス(ファイルエントリのみ0始まり), HL=出力バッファ(13バイト以上)
+;OUT CY=0:[HL]="NAME.EXT",00H / CY=1:そのインデックスは無い(末尾超過)
+;    破壊 AF,BC,DE,HL,IX,IY
+;=================================================
+STRM_DIRENT:
+	LD	(STRM_DBUF),HL		;出力バッファ退避
+	LD	(STRM_DIDX),DE		;目標インデックス
+	LD	HL,0			;計数=0
+	LD	(STRM_DCNT),HL		;
+	XOR	A			;発見フラグ=0
+	LD	(STRM_DFND),A		;
+	LD	A,0FFH			;列挙中はアクセス音抑止
+	LD	(SD_SND_OFF),A		;
+	LD	HL,(WDIR_CLSTR)		;現在ディレクトリを巡回
+	LD	IY,STRM_DENT_SUB	;
+	CALL	DIR_WALK		;
+	XOR	A			;
+	LD	(SD_SND_OFF),A		;抑止解除
+	LD	A,(STRM_DFND)		;
+	OR	A			;
+	JR	Z,.NF			;見つからない=末尾超過
+	LD	HL,STRM_DNAME		;8.3名を "NAME.EXT",0 に整形して出力
+	LD	DE,(STRM_DBUF)		;
+	CALL	STRM_FMT83		;
+	OR	A			;CY<-0
+	RET				;
+.NF:	SCF				;CY<-1
+	RET				;
+
+;[STRM]DIR_WALKコールバック: ファイルエントリを数え、目標番目をSTRM_DNAMEへ保存
+;IN HL=エントリ先頭 OUT CY=1で巡回終了
+STRM_DENT_SUB:
+	CALL	IS_VALID_DENT		;無効はスキップ/EODは終了(スタック操作で抜ける)
+	PUSH	HL			;IX<-エントリ先頭
+	POP	IX			;
+	LD	A,(IX+IDX_ATRB)		;属性
+	AND	00011110B		;隠/システム/ボリューム/ディレクトリ→ファイルでない
+	JR	NZ,.skip		;
+	LD	HL,(STRM_DCNT)		;DCNT==DIDX ?
+	LD	DE,(STRM_DIDX)		;
+	OR	A			;
+	SBC	HL,DE			;
+	JR	Z,.hit			;一致
+	LD	HL,(STRM_DCNT)		;計数++
+	INC	HL			;
+	LD	(STRM_DCNT),HL		;
+.skip:	OR	A			;CY<-0(継続)
+	RET				;
+.hit:	PUSH	IX			;HL<-エントリ名先頭
+	POP	HL			;
+	LD	DE,STRM_DNAME		;8.3名11バイトを保存
+	LD	BC,0BH			;
+	LDIR				;
+	LD	A,0FFH			;発見
+	LD	(STRM_DFND),A		;
+	SCF				;CY<-1(巡回終了)
+	RET				;
+
+;[STRM]8.3名(11バイト)を "NAME.EXT",00H へ整形
+;IN HL=8.3名(src), DE=出力(dst)
+STRM_FMT83:
+	PUSH	HL			;src退避
+	LD	B,08H			;名前部 最大8文字
+.nm:	LD	A,(HL)			;
+	CP	20H			;空白で打ち切り
+	JR	Z,.nmd			;
+	LD	(DE),A			;
+	INC	DE			;
+	INC	HL			;
+	DJNZ	.nm			;
+.nmd:	POP	HL			;src先頭
+	LD	BC,08H			;HL<-拡張子先頭(src+8)
+	ADD	HL,BC			;
+	LD	A,(HL)			;拡張子が空白なら拡張子なし
+	CP	20H			;
+	JR	Z,.end			;
+	LD	A,2EH			;"."
+	LD	(DE),A			;
+	INC	DE			;
+	LD	B,03H			;拡張子 最大3文字
+.ex:	LD	A,(HL)			;
+	CP	20H			;
+	JR	Z,.end			;
+	LD	(DE),A			;
+	INC	DE			;
+	INC	HL			;
+	DJNZ	.ex			;
+.end:	XOR	A			;00H終端
+	LD	(DE),A			;
+	RET				;

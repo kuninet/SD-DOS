@@ -24,7 +24,7 @@ DEBUG	EQU	FALSE				;
 	JP	STRM_OPEN			;6005H ストリームを開く
 	JP	STRM_READ			;6008H １バイト取得
 	JP	STRM_CLOSE			;600BH ストリームを閉じる
-	JP	STRM_RSVD			;600EH 予約
+	JP	STRM_DIRENT		;600EH ディレクトリ列挙(N番目のファイル名)
 	JP	STRM_RSVD			;6011H 予約
 
 INIT:
@@ -280,6 +280,11 @@ STRM_CSEC:	DS	01H			;クラスタ内セクタ＃
 STRM_BOFS:	DS	02H			;現在セクタ内のバイトオフセット（0～512）
 STRM_OPEN_BLK:	DS	01H			;ブロック読みを開いている最中なら非0
 STRM_TMP:	DS	01H			;ストリーム読み出しの取得値一時退避
+STRM_DBUF:	DS	02H			;[DIRENT]出力バッファのアドレス
+STRM_DIDX:	DS	02H			;[DIRENT]目標インデックス
+STRM_DCNT:	DS	02H			;[DIRENT]ファイルエントリ計数
+STRM_DFND:	DS	01H			;[DIRENT]発見フラグ
+STRM_DNAME:	DS	0BH			;[DIRENT]一致エントリの8.3名(11バイト)
 
 ATRB:		DS	01H			;ファイル属性表示用文字列の文字数指定部
 		DS	06H			;ファイル属性表示用文字列本体
