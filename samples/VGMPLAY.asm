@@ -23,6 +23,7 @@ OPN_DATA	EQU	81H		;YM2203 データ
 PSG_ADDR	EQU	0A0H		;PSG#1 レジスタ番号
 PSG_DATA	EQU	0A1H		;PSG#1 データ
 WAIT_K	EQU	5		;1サンプル（約22.7マイクロ秒）の内側ループ回数 ！実機で調整！
+READ_SAMP	EQU	9		;SD読み1バイトの所要(サンプル換算)。実機で調整
 CR	EQU	0DH		;
 RBUF_SIZE	EQU	1000H		;先読みリングバッファのサイズ（4KB。貯金枠）
 
@@ -30,7 +31,8 @@ RBUF_SIZE	EQU	1000H		;先読みリングバッファのサイズ（4KB。貯金枠）
 
 	JP	START			;9000H 実行エントリ(CMD Rでここへ来る)
 WAIT_KV:	DB	WAIT_K		;9003H ウェイト係数。POKE &H9003,n で実機調整可能
-	DB	0,0			;9004H,9005H 予備
+READ_SAMPV:	DB	READ_SAMP	;9004H SD読みコスト補正(POKE可。大きいほど速い)
+	DB	0			;9005H 予約
 
 START:
 	LD	(SAVSP),SP		;異常終了時の脱出用にSPを保存する
@@ -306,18 +308,33 @@ GETB:	PUSH	HL			;HL/DE/BCを保存（呼び出し側がHL等を使う）
 ;IN  DE=サンプル数
 ;-------------------------------------------------
 WAIT_DE:
-	CALL	RB_REFILL		;ウェイトの空き時間に先読みする
-	LD	A,D			;
+;I/Oインターリーブ:ウェイト時間でSD先読みを行い読み込み時間を隠す
+.FILL:	LD	A,D			;残ウェイト=0なら終了
 	OR	E			;
 	RET	Z			;
-.L:	LD	A,(WAIT_KV)		;ウェイト係数(実機POKEで可変)
+	CALL	RB_TRYFILL1		;満タンでなければ1バイト先読み(CY=1で読んだ)
+	JR	NC,.BURN		;満タン/EOFなら残りは空ループで消化
+	LD	A,(READ_SAMPV)		;読み1バイト分の所要(サンプル換算)を
+	LD	L,A			;残ウェイトから差し引く(I/Oをウェイトに隠す)
+	LD	A,E			;
+	SUB	L			;
+	LD	E,A			;
+	LD	A,D			;
+	SBC	A,0			;
+	LD	D,A			;
+	JR	C,.RET			;0を割ったらウェイト消化済み
+	LD	A,D			;
+	OR	E			;
+	JR	Z,.RET			;
+	JR	.FILL			;
+.BURN:	LD	A,(WAIT_KV)		;満タン後は先読み判定せず空ループのみ
 	LD	B,A			;
 .W:	DJNZ	.W			;
 	DEC	DE			;
 	LD	A,D			;
 	OR	E			;
-	JR	NZ,.L			;
-	RET				;
+	JR	NZ,.BURN		;
+.RET:	RET				;
 
 
 ;-------------------------------------------------
@@ -406,6 +423,30 @@ RB_REFILL:
 .FULL:	POP	HL			;
 	POP	DE			;
 	POP	BC			;
+	RET				;
+
+;[RB]満タンでなければ1バイトだけ先読み OUT CY=1:読んで格納 / CY=0:満タンorEOF
+RB_TRYFILL1:
+	LD	A,(RB_EOF)		;既に終端なら何もしない
+	OR	A			;
+	JR	NZ,.NO			;
+	PUSH	HL			;
+	PUSH	DE			;
+	LD	HL,(RB_CNT)		;CNT>=RBUF_SIZE なら満タン
+	LD	DE,RBUF_SIZE		;
+	OR	A			;CY=0
+	SBC	HL,DE			;
+	POP	DE			;
+	POP	HL			;
+	JR	NC,.NO			;満タン
+	CALL	STRM_READ		;1バイト読む(BC/DE/HL/IX保存)
+	JR	C,.EOF			;CY=1:終端
+	CALL	RB_PUT			;バッファへ(HL/DE保存)
+	SCF				;CY=1:読んだ
+	RET				;
+.EOF:	LD	A,0FFH			;終端フラグを立てる
+	LD	(RB_EOF),A		;
+.NO:	OR	A			;CY=0
 	RET				;
 
 ;-------------------------------------------------
