@@ -37,6 +37,7 @@ WRITE_COSTV:	DB	WRITE_COST	;9005H ‘žˆ—ƒRƒXƒg•â³(POKE‰ÂB‘å‚«‚¢‚Ù‚Ç–§¬ß‚ð‹
 
 START:
 	LD	(SAVSP),SP		;ˆÙíI—¹Žž‚Ì’Eo—p‚ÉSP‚ð•Û‘¶‚·‚é
+	LD	SP,STACK_TOP		;ê—pƒXƒ^ƒbƒN‚Ö(SD-DOS‚Ì[‚¢ŒÄ‚Ño‚µ‚ÅBASICƒXƒ^ƒbƒN‚ðˆì‚ê‚³‚¹‚È‚¢)
 	LD	HL,FNAME		;ƒtƒ@ƒCƒ‹‚ðŠJ‚­
 	CALL	STRM_OPEN		;
 	JR	NC,.OK			;
@@ -528,5 +529,7 @@ RB_WRP:		DS	2		;‘‚«ž‚Ýƒ|ƒCƒ“ƒ^
 RB_CNT:		DS	2		;ƒoƒbƒtƒ@“àƒoƒCƒg”i0`RBUF_SIZEj
 RB_EOF:		DS	1		;æ“Ç‚Ý‚ªI’[‚É’B‚µ‚½‚ç”ñ0
 WDEBT:		DS	2		;ˆ—ŽžŠÔdebt(ƒTƒ“ƒvƒ‹)
+STACK:		DS	256		;ƒvƒŒƒCƒ„[ê—pƒXƒ^ƒbƒN(ƒNƒ‰ƒXƒ^‹«ŠE‚Ì[‚¢ŒÄ‚Ño‚µ‚É‘Î‰ž)
+STACK_TOP	EQU	$		;ƒXƒ^ƒbƒNæ“ª(SP‚Ì‰Šú’lB‰º•ûŒü‚ÖL‚Ñ‚é)
 
 	END
