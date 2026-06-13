@@ -32,7 +32,7 @@ KEYWAIT	EQU	0F75H		;1文字入力待ち A<-コード
 STRM_DIRLIST	EQU	600EH		;ディレクトリ列挙(全ファイル名を一括取得)
 MAXFILES	EQU	40H		;一覧の最大ファイル数(64)
 BUSY_MAX	EQU	00H		;YM2203 BUSY待ち上限(0=無制限)。POKE &H9006
-RBUF_SIZE	EQU	4000H		;先読みリングバッファ(16KB。後半の枯渇対策)
+RBUF_SIZE	EQU	4800H		;先読みリングバッファ(16KB。後半の枯渇対策)
 INITFILL	EQU	2000H		;起動時の部分プリフィル(8KB。残りは再生中に育てる)
 
 	ORG	09000H
