@@ -29,7 +29,8 @@ CR	EQU	0DH		;
 LF	EQU	0AH		;
 BASIC	EQU	0081H		;BASICへ復帰(モニタGや自動実行どちらでも安全)
 KEYWAIT	EQU	0F75H		;1文字入力待ち A<-コード
-STRM_DIRENT	EQU	600EH		;ディレクトリ列挙(N番目のファイル名)
+STRM_DIRLIST	EQU	600EH		;ディレクトリ列挙(全ファイル名を一括取得)
+MAXFILES	EQU	40H		;一覧の最大ファイル数(64)
 BUSY_MAX	EQU	00H		;YM2203 BUSY待ち上限(0=無制限)。POKE &H9006
 RBUF_SIZE	EQU	1000H		;先読みリングバッファのサイズ（4KB。貯金枠）
 
@@ -543,28 +544,33 @@ PLAY_FILE:
 ;=================================================
 ;*.VGM一覧表示。(LISTCNT)=件数。番号は1始まり
 ;=================================================
+;*.VGM一覧表示。1回のSTRM_DIRLISTで全名取得しメモリ上で処理
+;=================================================
 BUILD_LIST:
 	LD	HL,MSG_HDR
 	CALL	PUTS
+	LD	HL,LISTBUF
+	LD	B,MAXFILES
+	CALL	STRM_DIRLIST
+	LD	(FILECNT),A
 	XOR	A
 	LD	(LISTCNT),A
-	LD	HL,0
-	LD	(DIRIDX),HL
-.lp:	LD	DE,(DIRIDX)
-	LD	HL,NAMEBUF
-	CALL	STRM_DIRENT
-	JR	C,.done
-	LD	HL,(DIRIDX)
-	INC	HL
-	LD	(DIRIDX),HL
+	LD	A,(FILECNT)
+	OR	A
+	JR	Z,.done
+	LD	HL,LISTBUF
+	LD	B,A
+.lp:	PUSH	BC
+	PUSH	HL
 	CALL	IS_VGM
-	JR	NZ,.lp
+	JR	NZ,.next
 	LD	A,(LISTCNT)
 	INC	A
 	CALL	PRDEC
 	LD	HL,MSG_COLON
 	CALL	PUTS
-	LD	HL,NAMEBUF
+	POP	HL
+	PUSH	HL
 	CALL	PUTS
 	LD	A,CR
 	RST	18H
@@ -573,50 +579,57 @@ BUILD_LIST:
 	LD	A,(LISTCNT)
 	INC	A
 	LD	(LISTCNT),A
-	JR	.lp
+.next:	POP	HL
+	LD	DE,0DH
+	ADD	HL,DE
+	POP	BC
+	DJNZ	.lp
 .done:	LD	HL,MSG_PROMPT
 	CALL	PUTS
 	RET
 
 ;=================================================
-;K番目(1始まり)の.VGMをPLAYNAMEへ。CY=0成功/CY=1なし
-;IN A=K
+;K番目(1始まり)の.VGMをPLAYNAMEへ(メモリ上LISTBUF走査)
+;IN A=K OUT CY=0成功/CY=1なし
 ;=================================================
 GET_NTH_VGM:
 	LD	(TARGETK),A
 	XOR	A
 	LD	(VGMCNT),A
-	LD	HL,0
-	LD	(DIRIDX),HL
-.lp:	LD	DE,(DIRIDX)
-	LD	HL,NAMEBUF
-	CALL	STRM_DIRENT
-	JR	C,.nf
-	LD	HL,(DIRIDX)
-	INC	HL
-	LD	(DIRIDX),HL
+	LD	A,(FILECNT)
+	OR	A
+	JR	Z,.nf
+	LD	HL,LISTBUF
+	LD	B,A
+.lp:	PUSH	BC
+	PUSH	HL
 	CALL	IS_VGM
-	JR	NZ,.lp
+	JR	NZ,.next
 	LD	A,(VGMCNT)
 	INC	A
 	LD	(VGMCNT),A
 	LD	HL,TARGETK
 	CP	(HL)
-	JR	NZ,.lp
-	LD	HL,NAMEBUF
+	JR	NZ,.next
+	POP	HL
 	LD	DE,PLAYNAME
 	LD	BC,0DH
 	LDIR
+	POP	BC
 	OR	A
 	RET
+.next:	POP	HL
+	LD	DE,0DH
+	ADD	HL,DE
+	POP	BC
+	DJNZ	.lp
 .nf:	SCF
 	RET
 
 ;=================================================
-;NAMEBUFの拡張子が"VGM"ならZ=1
+;HL先頭の名前の拡張子が"VGM"ならZ=1。HL破壊
 ;=================================================
 IS_VGM:
-	LD	HL,NAMEBUF
 .f:	LD	A,(HL)
 	OR	A
 	JR	Z,.no
@@ -738,12 +751,12 @@ RB_EOF:		DS	1		;先読みが終端に達したら非0
 WDEBT:		DS	2		;処理時間debt(サンプル)
 PLAYSP:		DS	02H			;再生中の脱出点SP
 LISTCNT:	DS	01H			;一覧の件数
-DIRIDX:		DS	02H			;ディレクトリ列挙インデックス
 VGMCNT:		DS	01H			;VGM計数(選択用)
 TARGETK:	DS	01H			;選択された番号(1始まり)
 OPNREG:		DS	01H			;YM2203レジスタ番号一時
 OPNDAT:		DS	01H			;YM2203データ一時
-NAMEBUF:	DS	0DH			;列挙ファイル名("NAME.EXT",0)
+FILECNT:	DS	01H			;全ファイル件数
+LISTBUF:	DS	MAXFILES*0DH		;一覧バッファ(1件13バイト)
 PLAYNAME:	DS	0DH			;選択ファイル名
 STACK:		DS	256		;プレイヤー専用スタック(クラスタ境界の深い呼び出しに対応)
 STACK_TOP	EQU	$		;スタック先頭(SPの初期値。下方向へ伸びる)

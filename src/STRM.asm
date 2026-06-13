@@ -223,59 +223,57 @@ STRM_RSVD:
 ;OUT CY=0:[HL]="NAME.EXT",00H / CY=1:そのインデックスは無い(末尾超過)
 ;    破壊 AF,BC,DE,HL,IX,IY
 ;=================================================
-STRM_DIRENT:
-	LD	(STRM_DBUF),HL		;出力バッファ退避
-	LD	(STRM_DIDX),DE		;目標インデックス
-	LD	HL,0			;計数=0
-	LD	(STRM_DCNT),HL		;
-	XOR	A			;発見フラグ=0
-	LD	(STRM_DFND),A		;
+;[STRM]ディレクトリ列挙: 現在WDIRの全ファイル名をバッファへ書き込む(1回走査)
+;IN  HL=出力バッファ, B=最大件数(1件13バイト "NAME.EXT",0)
+;OUT A=書き込んだ件数(B上限)
+;    破壊 AF,BC,DE,HL,IX,IY
+;=================================================
+STRM_DIRLIST:
+	LD	(STRM_DLPTR),HL	;書き込みポインタ
+	LD	A,B			;最大件数
+	LD	(STRM_DLMAX),A		;
+	XOR	A			;件数=0
+	LD	(STRM_DLCNT),A		;
 	LD	A,0FFH			;列挙中はアクセス音抑止
 	LD	(SD_SND_OFF),A		;
-	LD	HL,(WDIR_CLSTR)		;現在ディレクトリを巡回
-	LD	IY,STRM_DENT_SUB	;
+	LD	HL,(WDIR_CLSTR)		;現在ディレクトリを1回巡回
+	LD	IY,STRM_DLIST_SUB	;
 	CALL	DIR_WALK		;
 	XOR	A			;
 	LD	(SD_SND_OFF),A		;抑止解除
-	LD	A,(STRM_DFND)		;
-	OR	A			;
-	JR	Z,.NF			;見つからない=末尾超過
-	LD	HL,STRM_DNAME		;8.3名を "NAME.EXT",0 に整形して出力
-	LD	DE,(STRM_DBUF)		;
-	CALL	STRM_FMT83		;
-	OR	A			;CY<-0
-	RET				;
-.NF:	SCF				;CY<-1
+	LD	A,(STRM_DLCNT)		;A<-件数
 	RET				;
 
-;[STRM]DIR_WALKコールバック: ファイルエントリを数え、目標番目をSTRM_DNAMEへ保存
-;IN HL=エントリ先頭 OUT CY=1で巡回終了
-STRM_DENT_SUB:
-	CALL	IS_VALID_DENT		;無効はスキップ/EODは終了(スタック操作で抜ける)
-	PUSH	HL			;IX<-エントリ先頭
+;[STRM]DIR_WALKコールバック: ファイルエントリ名をバッファへ追記
+;IN HL=エントリ先頭 OUT CY=1で巡回終了(上限到達)
+STRM_DLIST_SUB:
+	CALL	IS_VALID_DENT		;無効はスキップ/EODは終了
+	PUSH	HL			;IX<-エントリ
 	POP	IX			;
 	LD	A,(IX+IDX_ATRB)		;属性
-	AND	00011110B		;隠/システム/ボリューム/ディレクトリ→ファイルでない
+	AND	00011110B		;隠/システム/ボリューム/ディレクトリ→除外
 	JR	NZ,.skip		;
-	LD	HL,(STRM_DCNT)		;DCNT==DIDX ?
-	LD	DE,(STRM_DIDX)		;
-	OR	A			;
-	SBC	HL,DE			;
-	JR	Z,.hit			;一致
-	LD	HL,(STRM_DCNT)		;計数++
-	INC	HL			;
-	LD	(STRM_DCNT),HL		;
+	LD	A,(STRM_DLCNT)		;上限到達?
+	LD	B,A			;
+	LD	A,(STRM_DLMAX)		;
+	CP	B			;
+	JR	Z,.full			;
+	PUSH	IX			;HL<-エントリ名(8.3)
+	POP	HL			;
+	LD	DE,(STRM_DLPTR)		;出力先
+	CALL	STRM_FMT83		;"NAME.EXT",0 を書く
+	LD	HL,(STRM_DLPTR)		;ポインタ+13
+	LD	DE,0DH			;
+	ADD	HL,DE			;
+	LD	(STRM_DLPTR),HL		;
+	LD	A,(STRM_DLCNT)		;件数++
+	INC	A			;
+	LD	(STRM_DLCNT),A		;
 .skip:	OR	A			;CY<-0(継続)
 	RET				;
-.hit:	PUSH	IX			;HL<-エントリ名先頭
-	POP	HL			;
-	LD	DE,STRM_DNAME		;8.3名11バイトを保存
-	LD	BC,0BH			;
-	LDIR				;
-	LD	A,0FFH			;発見
-	LD	(STRM_DFND),A		;
-	SCF				;CY<-1(巡回終了)
+.full:	SCF				;CY<-1(上限で終了)
 	RET				;
+
 
 ;[STRM]8.3名(11バイト)を "NAME.EXT",00H へ整形
 ;IN HL=8.3名(src), DE=出力(dst)
