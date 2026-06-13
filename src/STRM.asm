@@ -81,6 +81,7 @@ STRM_READ:
 
 .EOF:	LD	A,02H			;EOF到達にする
 	LD	(STRM_STAT),A		;
+	CALL	STRM_ENDBLK		;EOF時に開いているブロックを即閉じる(長時間放置を避ける)
 	POP	IX			;
 	POP	HL			;
 	POP	DE			;
