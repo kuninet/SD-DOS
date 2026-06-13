@@ -308,14 +308,23 @@ GETB:	PUSH	HL			;HL/DE/BCを保存（呼び出し側がHL等を使う）
 ;IN  DE=サンプル数
 ;-------------------------------------------------
 WAIT_DE:
-;I/Oインターリーブ:ウェイト時間でSD先読みを行い読み込み時間を隠す
+;I/Oインターリーブ:長いウェイト中にSD先読みを行い読み込み時間を隠す
+;短いウェイトは先読みを挟まず正確に刻む(読み1回での水増しを防ぎ音価を保つ)
 .FILL:	LD	A,D			;残ウェイト=0なら終了
 	OR	E			;
 	RET	Z			;
-	CALL	RB_TRYFILL1		;満タンでなければ1バイト先読み(CY=1で読んだ)
-	JR	NC,.BURN		;満タン/EOFなら残りは空ループで消化
-	LD	A,(READ_SAMPV)		;読み1バイト分の所要(サンプル換算)を
-	LD	L,A			;残ウェイトから差し引く(I/Oをウェイトに隠す)
+	LD	A,D			;D!=0なら十分長い→先読み可
+	OR	A			;
+	JR	NZ,.DOFILL		;
+	LD	A,(READ_SAMPV)		;D=0: 残E < READ_SAMP なら短すぎ
+	LD	B,A			;
+	LD	A,E			;
+	CP	B			;
+	JR	C,.BURN			;短ウェイト→先読みせず空ループで正確に消化
+.DOFILL:	CALL	RB_TRYFILL1		;満タンでなければ1バイト先読み(CY=1で読んだ)
+	JR	NC,.BURN		;満タン/EOF→残りは空ループ
+	LD	A,(READ_SAMPV)		;読んだ分(サンプル換算)を残ウェイトから差し引く
+	LD	L,A			;(I/Oをウェイトに隠す)
 	LD	A,E			;
 	SUB	L			;
 	LD	E,A			;
@@ -323,11 +332,8 @@ WAIT_DE:
 	SBC	A,0			;
 	LD	D,A			;
 	JR	C,.RET			;0を割ったらウェイト消化済み
-	LD	A,D			;
-	OR	E			;
-	JR	Z,.RET			;
-	JR	.FILL			;
-.BURN:	LD	A,(WAIT_KV)		;満タン後は先読み判定せず空ループのみ
+	JR	.FILL			;残ウェイト/満タン判定は先頭で
+.BURN:	LD	A,(WAIT_KV)		;空ループでウェイトを消化
 	LD	B,A			;
 .W:	DJNZ	.W			;
 	DEC	DE			;
