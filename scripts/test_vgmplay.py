@@ -14,8 +14,10 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from test_multicluster import load_symbols
 from test_stream_api import setup, make_disk, make_dent, START_CLSTR
 from vgmfixture import make_vgm, ym2203, psg, wait, END
+from z80mini import Trap
 
 PLAYER_ORG = 0x9000
+BASIC = 0x0081  # プレイヤーは終了時にRETではなくJP BASICで戻る(モニタG起動でも安全)
 
 
 def run_player(raw_path, syms, player_raw, vgm_bytes):
@@ -26,7 +28,16 @@ def run_player(raw_path, syms, player_raw, vgm_bytes):
     player = open(player_raw, "rb").read()
     cpu.mem[PLAYER_ORG : PLAYER_ORG + len(player)] = player
     cpu.io_in[0x80] = lambda c: 0x00  # YM2203ステータス: BUSYなし
-    cpu.call(PLAYER_ORG)
+
+    def basic_exit(c):
+        raise Trap("BASIC_EXIT", c)  # JP BASIC 到達=クリーン終了
+
+    cpu.hooks[BASIC] = basic_exit
+    try:
+        cpu.call(PLAYER_ORG)
+    except Trap as t:
+        if "BASIC_EXIT" not in t.name:
+            raise
     sound = [(p, v) for p, v in cpu.io_log if p in (0x80, 0x81, 0xA0, 0xA1)]
     return sound, cpu.output.decode("ascii", "replace")
 

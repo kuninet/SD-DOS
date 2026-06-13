@@ -26,6 +26,7 @@ WAIT_K	EQU	02H		;1サンプルの内側ループ回数(実機調整値)。POKE &H9003
 READ_SAMP	EQU	20H		;SD読み1バイトの所要(サンプル換算)。POKE &H9004
 WRITE_COST	EQU	23H		;音源書き込み1回の処理時間(サンプル換算)。POKE &H9005
 CR	EQU	0DH		;
+BASIC	EQU	0081H		;BASICへ復帰(モニタGや自動実行どちらでも安全)
 RBUF_SIZE	EQU	1000H		;先読みリングバッファのサイズ（4KB。貯金枠）
 
 	ORG	09000H
@@ -42,7 +43,8 @@ START:
 	CALL	STRM_OPEN		;
 	JR	NC,.OK			;
 	LD	HL,MSG_NF		;見つからなければメッセージを表示して終了
-	JP	PUTS			;
+	CALL	PUTS			;メッセージ表示
+	JP	BASIC			;RETせずBASICへ(G起動でも安全)
 
 .OK:	CALL	RB_INIT			;リングバッファ初期化
 	CALL	PARSE_HDR		;ヘッダを解析してデータ開始位置まで進める
@@ -56,7 +58,8 @@ DONE:
 	LD	SP,(SAVSP)		;
 	CALL	STRM_CLOSE		;
 	LD	HL,MSG_END		;
-	JP	PUTS			;
+	CALL	PUTS			;メッセージ表示
+	JP	BASIC			;RETせずBASICへ(G起動でも安全)
 
 ;-------------------------------------------------
 ;異常終了
@@ -67,7 +70,8 @@ ABORT:
 	PUSH	HL			;
 	CALL	STRM_CLOSE		;
 	POP	HL			;
-	JP	PUTS			;
+	CALL	PUTS			;メッセージ表示
+	JP	BASIC			;RETせずBASICへ(G起動でも安全)
 
 ;-------------------------------------------------
 ;ヘッダ解析（docs/vgm/header.md の最小解析範囲）
