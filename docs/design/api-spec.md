@@ -48,7 +48,7 @@ SD-DOS本体の先頭(ORG 6000H)は現在「DB "AB"(自動起動マーカー)+�
 - CY=0: A=取得した1バイト
 - CY=1: A=ステータス(00H=EOF到達(正常終了)、01H=未オープン)
 
-**破壊レジスタ**: AF。内部で裏レジスタ(EXX)を使用する
+**破壊レジスタ**: AFのみ(BC/DE/HL/IXは保存する)
 
 **動作**:
 
@@ -87,26 +87,32 @@ MAIN.asmのワークエリア末尾に追加する(DS領域のため本体のコ
 | STRM_REMAIN | 4バイト | 残りバイト数。オープン時にDIR_ENTRYのファイルサイズで初期化 |
 | STRM_STAT | 1バイト | 00H=未オープン、01H=読み出し中、02H=EOF到達 |
 | SD_SND_OFF | 1バイト | 0=アクセス音を鳴らす(通常)、非0=抑止(ストリーム読み出し中) |
+| STRM_CLSTR | 2バイト | 現在のクラスタ番号 |
+| STRM_CSEC | 1バイト | クラスタ内のセクタ番号(0〜SCTRS_PER_CLSTR-1) |
+| STRM_BOFS | 2バイト | 現在セクタ内のバイトオフセット(0〜512) |
+| STRM_OPEN_BLK | 1バイト | ブロック読みを開いている最中なら非0 |
+| STRM_TMP | 1バイト | 取得値の一時退避 |
 
-既存のFP系ワーク(FP、FP_CLSTR、FP_SCTR_SN)とFILE_BFFR/FILE_BFFR_STRCTをそのまま使う([ストリーム読み出しの状態管理](seq-read-state.md))。
+ストリームの読み出しは専用の位置管理ワーク(上記)を持ち、`FILE_BFFR`やFP系ワークは使わない(既存の`LOAD`/`RBYTE`経路と分離。[インクリメンタル(ストリーミング)セクタ読みの設計](streaming-read.md))。
 
 ## 内部構成
 
-前提として、複数クラスタ読みの不整合([複数クラスタ読みの既存挙動の確認結果](multicluster-read.md))は本APIの実装に先立って修正する。修正後は既存の読み出し経路がそのまま正しく動くため、新設はラッパーと状態管理だけになる。
+ストリーム読み出しはSDのブロック読みを開いたまま1バイトずつクロックするインクリメンタル方式で実装する(詳細と根拠は[インクリメンタル(ストリーミング)セクタ読みの設計](streaming-read.md))。`FILE_BFFR`一括読みやFP系の経路は使わず、専用の位置管理ワークで進める。`STRM_READ`1回あたりの時間が約0.2ミリ秒(SD 1バイト分)に固定され、約0.1秒のバーストが無い。
 
 新設ルーチンはSTRM.asm(新ファイル)にまとめ、MAIN.asmからINCLUDEする。
 
-**新設(ラッパー)**:
+**新設**:
 
-- **STRM_OPEN**: ワーキングディレクトリの退避、パス解決(CHANGE_WDIR)、エントリ検索(GET_DENT)、TGT_CLSTRと残りバイト数の設定、PREP_READによる初期化、状態設定、ワーキングディレクトリの復帰
-- **STRM_READ**: 状態と残りバイト数を判定した後、既存のFP2BPで現在位置の1バイトを取得し、残りが0より大きい場合だけ既存のINC_FPでファイルポインタを進める
-- **STRM_CLOSE**: 状態のクリア
+- **STRM_OPEN**: ワーキングディレクトリの退避、パス解決(CHANGE_WDIR)、エントリ検索(GET_DENT)、位置管理ワークと残りバイト数の初期化、ワーキングディレクトリの復帰(ブロックは遅延オープン)
+- **STRM_READ**: 状態と残りバイト数を判定し、ブロック未オープンなら現在セクタのブロックを開いて(STRM_BLKOPEN)、`MMC_1RD`で1バイトクロックし、残りバイト数を減らしてセクタ内位置を進める(STRM_ADVANCE)
+- **STRM_BLKOPEN**: GET_FIRST_SCTR+クラスタ内セクタ番号で物理セクタを求め、GET_PHYSICAL_ADRSでMMCADRを設定し、MMC_BRD_CMDでブロック読みを開く
+- **STRM_ADVANCE**: セクタ内位置を進め、512に達したらブロックを締めて(STRM_ENDBLK)次セクタへ。クラスタ末尾はREAD_FAT_DATAで次クラスタへ
+- **STRM_ENDBLK**: 開いているブロックの残りデータをドレインしてMMC_BRD_END(CRC)で締める
+- **STRM_CLOSE**: ブロックを締め、状態をクリア
 
-**再利用(変更しない)**: CHANGE_WDIR、GET_DENT、RESTORE_WDIR、PREP_READ(INIT_FP、READ_FP_SCTRを含む)、FP2BP、INC_FP(NEXT_CLSTR、LOAD_BFFRを含む)、DWORD演算
+**再利用(変更しない)**: CHANGE_WDIR、GET_DENT、RESTORE_WDIR、GET_FIRST_SCTR、GET_PHYSICAL_ADRS、READ_FAT_DATA、MMC_BRD_CMD/MMC_1RD/MMC_BRD_END、DWORD演算
 
-**変更**: `MMC_LED_ON`(MMC.asm)に`SD_SND_OFF`によるアクセス音ゲートを追加(フラグ0なら従来挙動。上記「SDアクセス音の抑止」を参照)
-
-PREP_READが行うIS_CALLBACKのクリアは、CMT読み込み向けフラグの初期化であり、ストリーム読み出しでは無害である。
+**変更**: `MMC_LED_ON`(MMC.asm)に`SD_SND_OFF`によるアクセス音ゲートを追加済み(フラグ0なら従来挙動。上記「SDアクセス音の抑止」を参照)。インクリメンタル経路のデータ読みは`MMC_LED_ON`/`OFF`を呼ばないため、LED・画面`*`・音は出ない(通常のDOS操作・ディレクトリ検索・FAT読みは従来どおり)。
 
 ## 利用例
 
@@ -126,7 +132,7 @@ FNAME:	DB	"/MUSIC/SONG.VGM",00H
 ## 制約
 
 - FILE_BFFRを既存コマンドと共用するため、ストリーム読み出し中(オープン〜クローズ)はSD-DOSの既存コマンドを使わない([ストリーム読み出しの取得単位とバッファ](buffer-unit.md))
-- STRM_READは内部で裏レジスタを使用するため、利用側が裏レジスタに依存する場合は注意する
+- STRM_READ/STRM_CLOSEはBC/DE/HL/IXを保存し、AFのみ変化する
 - 本体コード長がローダのコピー長BODY_LEN(現在1A00H)を超えた場合は、LOADER64.asmとscripts/make64kram.pyの定数更新が必要(scripts/make64kram.pyがエラーで検出する)
 
 ## 今後の確認事項

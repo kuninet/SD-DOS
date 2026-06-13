@@ -78,6 +78,26 @@ def setup(raw_path, syms, disk):
         return hook
 
     cpu.hooks[syms["READ_SCTR"]] = read_sctr
+
+    # インクリメンタル読み: MMCブロック命令をディスクイメージで肩代わり
+    block = {"sector": 0, "cursor": 0}
+
+    def mmc_brd_cmd(c):
+        phys = int.from_bytes(bytes(c.mem[syms["MMCADR0"]:syms["MMCADR0"]+4]), "little")
+        block["sector"] = phys // SCTR_SIZE
+        block["cursor"] = 0
+        return True
+
+    def mmc_1rd(c):
+        data = disk.get(block["sector"], bytes(SCTR_SIZE))
+        idx = block["cursor"]
+        c.c = data[idx] if idx < SCTR_SIZE else 0
+        block["cursor"] += 1
+        return True
+
+    cpu.hooks[syms["MMC_BRD_CMD"]] = mmc_brd_cmd
+    cpu.hooks[syms["MMC_1RD"]] = mmc_1rd
+    cpu.hooks[syms["MMC_BRD_END"]] = lambda c: True
     cpu.rst_hooks[0x18] = lambda c: c.output.append(c.a)  # 1文字出力は捕捉のみ
 
     # N-BASIC ROMルーチンのホスト側実装

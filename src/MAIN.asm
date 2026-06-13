@@ -42,6 +42,7 @@ endif
 	XOR	A				;ストリーム読み出しを未オープンにする
 	LD	(STRM_STAT),A			;
 	LD	(SD_SND_OFF),A			;アクセス音抑止フラグ初期化
+	LD	(STRM_OPEN_BLK),A		;ブロックオープンフラグ初期化
 
 	LD	HL,MSG_TITLE			;タイトル表示
 	CALL	PRINT				;
@@ -274,6 +275,11 @@ FP_SCTR_SN:	DS	01H			;FPが示すアドレスが、クラスタ内の何番目のセクタに含まれるか
 STRM_REMAIN:	DS	04H			;ストリーム読み出しの残りバイト数
 STRM_STAT:	DS	01H			;ストリーム読み出しの状態 00H=未オープン,01H=読み出し中,02H=EOF到達
 SD_SND_OFF:	DS	01H			;ストリーム読み出し中のSDアクセス音抑止 0=鳴らす,非0=抑止
+STRM_CLSTR:	DS	02H			;ストリーム読み出しの現在クラスタ＃
+STRM_CSEC:	DS	01H			;クラスタ内セクタ＃
+STRM_BOFS:	DS	02H			;現在セクタ内のバイトオフセット（0～512）
+STRM_OPEN_BLK:	DS	01H			;ブロック読みを開いている最中なら非0
+STRM_TMP:	DS	01H			;ストリーム読み出しの取得値一時退避
 
 ATRB:		DS	01H			;ファイル属性表示用文字列の文字数指定部
 		DS	06H			;ファイル属性表示用文字列本体
