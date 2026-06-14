@@ -1,18 +1,15 @@
 ;=================================================
-;VGMPLAY - VGM再生サンプル（YM2203/PSG両対応）
+;VGMPLAY - VGM再生サンプル(YM2203/PSG両対応)
 ;=================================================
-;・FNAMEで指定したVGMファイル（無圧縮）をストリーム読み出しAPIで
-;  読みながら、YM2203ボード（80H/81H）とPSGボード（0A0H/0A1H）へ出力する
+;・SD上の*.VGM(無圧縮)を一覧表示し、番号で選んでストリーム読み出しAPIで
+;  読みながら、YM2203ボード(80H/81H)とPSGボード(0A0H/0A1H)へ出力する
 ;・両ボードのコマンドを1本で処理する。未接続ポートへのOUTは無害
-;・使い方
-;    LOAD "VGMPLAY.CMT"
-;    CMD R
-;・対象のファイル名はFNAME（本ソース末尾）を書き換えてアセンブルする
-;・ヘッダ解析範囲は docs/vgm/header.md、コマンドと読み飛ばし規則は
-;  docs/vgm/commands.md、音源の書き込み手順は docs/vgm/sound-io.md を参照
-;・タイミングはビジーループ近似。テンポは WAIT_K(既定値)で決まる
-;・実機調整: LOAD後 POKE &H9003,n (n=1～255 小さいほど速い)してから CMD R で再生
-;  9003H は WAIT_KV(ウェイト係数)の固定アドレス
+;・使い方: LOAD "VGMPLAY.CMT" →(必要ならCD)→ モニタで G9000
+;   現在ディレクトリの*.VGM一覧 → 番号+Enterで再生 → 0/Enterで終了
+;・調整ポイント(POKE)と詳細は docs/vgm/README.md を参照
+;   9003H=WAIT_KV(テンポ) 9004H=READ_SAMP(先読み)
+;   9005H=WRITE_COST(書込補正) 9006H=BUSY_MAX(BUSY待ち上限)
+;・ヘッダ=header.md コマンド=commands.md 音源=sound-io.md (docs/vgm/)
 ;=================================================
 
 STRM_OPEN	EQU	6005H		;ストリームを開く
@@ -23,7 +20,7 @@ OPN_DATA	EQU	81H		;YM2203 データ
 PSG_ADDR	EQU	0A0H		;PSG#1 レジスタ番号
 PSG_DATA	EQU	0A1H		;PSG#1 データ
 WAIT_K	EQU	02H		;1サンプルの内側ループ回数(実機調整値)。POKE &H9003
-READ_SAMP	EQU	1EH		;SD読み1バイトの所要(サンプル換算)。POKE &H9004
+READ_SAMP	EQU	10H		;SD読み1バイトの所要(サンプル換算)。POKE &H9004
 WRITE_COST	EQU	23H		;音源書き込み1回の処理時間(サンプル換算)。POKE &H9005
 CR	EQU	0DH		;
 LF	EQU	0AH		;
