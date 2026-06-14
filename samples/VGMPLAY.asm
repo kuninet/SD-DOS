@@ -23,7 +23,7 @@ OPN_DATA	EQU	81H		;YM2203 データ
 PSG_ADDR	EQU	0A0H		;PSG#1 レジスタ番号
 PSG_DATA	EQU	0A1H		;PSG#1 データ
 WAIT_K	EQU	02H		;1サンプルの内側ループ回数(実機調整値)。POKE &H9003
-READ_SAMP	EQU	20H		;SD読み1バイトの所要(サンプル換算)。POKE &H9004
+READ_SAMP	EQU	1EH		;SD読み1バイトの所要(サンプル換算)。POKE &H9004
 WRITE_COST	EQU	23H		;音源書き込み1回の処理時間(サンプル換算)。POKE &H9005
 CR	EQU	0DH		;
 LF	EQU	0AH		;
