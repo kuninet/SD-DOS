@@ -22,7 +22,8 @@ ROOT_SCTR = 5
 DATA_SCTR = 10
 START_CLSTR = 2
 
-STRM_OPEN, STRM_READ, STRM_CLOSE, STRM_RSVD = 0x6005, 0x6008, 0x600B, 0x600E
+STRM_OPEN, STRM_READ, STRM_CLOSE = 0x6005, 0x6008, 0x600B
+STRM_DIRENT, STRM_RSVD = 0x600E, 0x6011  # 600E=ディレクトリ列挙, 6011=予約
 FNAME_ADR = 0x9000
 
 CY = 0x01
@@ -219,11 +220,36 @@ def main():
     cpu.call(STRM_READ)
     check(results, "EOFでCY=1,A=00H", bool(cpu.f & CY) and cpu.a == 0)
 
-    # ケース4: 予約エントリ
-    print("=== ケース4: 予約エントリ")
+    # ケース4: 予約エントリ(6011H)
+    print("=== ケース4: 予約エントリ(6011H)")
     cpu = setup(raw_path, syms, disk)
     cpu.call(STRM_RSVD)
     check(results, "CY=1,A=0FFH(未実装)", bool(cpu.f & CY) and cpu.a == 0xFF)
+
+    # ケース5: ディレクトリ列挙(600EH STRM_DIRLIST 一括取得)
+    print("=== ケース5: ディレクトリ列挙(600EH STRM_DIRLIST)")
+    dents = [make_dent("SONG1   VGM", 2, 100),
+             make_dent("SONG2   VGM", 3, 200),
+             make_dent("README  TXT", 4, 50)]
+    disk5 = make_disk({2: 0xFFFF, 3: 0xFFFF, 4: 0xFFFF}, b"", dents)
+    cpu = setup(raw_path, syms, disk5)
+    BUF = 0x9000
+    cpu.set_hl(BUF)       # HL=出力バッファ
+    cpu.b = 0x40          # B=最大件数
+    cpu.call(STRM_DIRENT)  # 600E=STRM_DIRLIST
+    count = cpu.a
+    names = []
+    for i in range(count):
+        a = BUF + i * 13
+        s = bytearray()
+        while cpu.mem[a] != 0 and a < BUF + i * 13 + 13:
+            s.append(cpu.mem[a])
+            a += 1
+        names.append(s.decode("ascii", "replace"))
+    check(results, "3件を一括取得", count == 3, f"count={count} {names}")
+    check(results, "0番=SONG1.VGM", bool(names) and names[0] == "SONG1.VGM")
+    check(results, "1番=SONG2.VGM", len(names) > 1 and names[1] == "SONG2.VGM")
+    check(results, "2番=README.TXT(拡張子整形)", len(names) > 2 and names[2] == "README.TXT")
 
     print()
     if all(results):

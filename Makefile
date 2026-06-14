@@ -66,7 +66,14 @@ $(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
 	mv src/MAIN.sym $(BUILD)/MAIN.sym
 	mv src/MAIN.asm.log.asz $(BUILD)/MAIN.asm.log.asz
 
-list: $(BUILD)/MAIN.raw
+# VGMPLAYのアセンブルリスト(.asm.log.asz)とシンボル(.sym)も -debug で生成する
+$(BUILD)/VGMPLAY.asm.log.asz: samples/VGMPLAY.asm | $(BUILD)
+	$(ASM) -raw -debug -sym samples/VGMPLAY.asm
+	mv samples/VGMPLAY.asm.log.asz $@
+	mv samples/VGMPLAY.sym $(BUILD)/VGMPLAY.sym
+	rm -f samples/VGMPLAY.raw
+
+list: $(BUILD)/MAIN.raw $(BUILD)/VGMPLAY.asm.log.asz
 
 test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw $(BUILD)/VGMPLAY.raw
 	$(PYTHON) scripts/test_emu_io.py

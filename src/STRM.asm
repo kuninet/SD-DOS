@@ -81,6 +81,7 @@ STRM_READ:
 
 .EOF:	LD	A,02H			;EOF到達にする
 	LD	(STRM_STAT),A		;
+	CALL	STRM_ENDBLK		;EOF時に開いているブロックを即閉じる(長時間放置を避ける)
 	POP	IX			;
 	POP	HL			;
 	POP	DE			;
@@ -215,4 +216,95 @@ STRM_CLOSE:
 STRM_RSVD:
 	LD	A,0FFH			;未実装
 	SCF				;
+	RET				;
+
+;=================================================
+;[STRM]ディレクトリ列挙: 現在WDIRのN番目のファイルエントリ名を返す
+;IN  DE=インデックス(ファイルエントリのみ0始まり), HL=出力バッファ(13バイト以上)
+;OUT CY=0:[HL]="NAME.EXT",00H / CY=1:そのインデックスは無い(末尾超過)
+;    破壊 AF,BC,DE,HL,IX,IY
+;=================================================
+;[STRM]ディレクトリ列挙: 現在WDIRの全ファイル名をバッファへ書き込む(1回走査)
+;IN  HL=出力バッファ, B=最大件数(1件13バイト "NAME.EXT",0)
+;OUT A=書き込んだ件数(B上限)
+;    破壊 AF,BC,DE,HL,IX,IY
+;=================================================
+STRM_DIRLIST:
+	LD	(STRM_DLPTR),HL	;書き込みポインタ
+	LD	A,B			;最大件数
+	LD	(STRM_DLMAX),A		;
+	XOR	A			;件数=0
+	LD	(STRM_DLCNT),A		;
+	LD	A,0FFH			;列挙中はアクセス音抑止
+	LD	(SD_SND_OFF),A		;
+	LD	HL,(WDIR_CLSTR)		;現在ディレクトリを1回巡回
+	LD	IY,STRM_DLIST_SUB	;
+	CALL	DIR_WALK		;
+	XOR	A			;
+	LD	(SD_SND_OFF),A		;抑止解除
+	LD	A,(STRM_DLCNT)		;A<-件数
+	RET				;
+
+;[STRM]DIR_WALKコールバック: ファイルエントリ名をバッファへ追記
+;IN HL=エントリ先頭 OUT CY=1で巡回終了(上限到達)
+STRM_DLIST_SUB:
+	CALL	IS_VALID_DENT		;無効はスキップ/EODは終了
+	PUSH	HL			;IX<-エントリ
+	POP	IX			;
+	LD	A,(IX+IDX_ATRB)		;属性
+	AND	00011110B		;隠/システム/ボリューム/ディレクトリ→除外
+	JR	NZ,.skip		;
+	LD	A,(STRM_DLCNT)		;上限到達?
+	LD	B,A			;
+	LD	A,(STRM_DLMAX)		;
+	CP	B			;
+	JR	Z,.full			;
+	PUSH	IX			;HL<-エントリ名(8.3)
+	POP	HL			;
+	LD	DE,(STRM_DLPTR)		;出力先
+	CALL	STRM_FMT83		;"NAME.EXT",0 を書く
+	LD	HL,(STRM_DLPTR)		;ポインタ+13
+	LD	DE,0DH			;
+	ADD	HL,DE			;
+	LD	(STRM_DLPTR),HL		;
+	LD	A,(STRM_DLCNT)		;件数++
+	INC	A			;
+	LD	(STRM_DLCNT),A		;
+.skip:	OR	A			;CY<-0(継続)
+	RET				;
+.full:	SCF				;CY<-1(上限で終了)
+	RET				;
+
+
+;[STRM]8.3名(11バイト)を "NAME.EXT",00H へ整形
+;IN HL=8.3名(src), DE=出力(dst)
+STRM_FMT83:
+	PUSH	HL			;src退避
+	LD	B,08H			;名前部 最大8文字
+.nm:	LD	A,(HL)			;
+	CP	20H			;空白で打ち切り
+	JR	Z,.nmd			;
+	LD	(DE),A			;
+	INC	DE			;
+	INC	HL			;
+	DJNZ	.nm			;
+.nmd:	POP	HL			;src先頭
+	LD	BC,08H			;HL<-拡張子先頭(src+8)
+	ADD	HL,BC			;
+	LD	A,(HL)			;拡張子が空白なら拡張子なし
+	CP	20H			;
+	JR	Z,.end			;
+	LD	A,2EH			;"."
+	LD	(DE),A			;
+	INC	DE			;
+	LD	B,03H			;拡張子 最大3文字
+.ex:	LD	A,(HL)			;
+	CP	20H			;
+	JR	Z,.end			;
+	LD	(DE),A			;
+	INC	DE			;
+	INC	HL			;
+	DJNZ	.ex			;
+.end:	XOR	A			;00H終端
+	LD	(DE),A			;
 	RET				;

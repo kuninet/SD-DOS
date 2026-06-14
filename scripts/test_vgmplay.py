@@ -14,19 +14,42 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from test_multicluster import load_symbols
 from test_stream_api import setup, make_disk, make_dent, START_CLSTR
 from vgmfixture import make_vgm, ym2203, psg, wait, END
+from z80mini import Trap
 
 PLAYER_ORG = 0x9000
+BASIC = 0x0081  # プレイヤーは終了時にRETではなくJP BASICで戻る(モニタG起動でも安全)
 
 
-def run_player(raw_path, syms, player_raw, vgm_bytes):
-    disk = make_disk({2: 3, 3: 4, 4: 0xFFFF},
-                     vgm_bytes,
-                     [make_dent("MUSIC   VGM", START_CLSTR, len(vgm_bytes))])
+KEYWAIT = 0x0F75  # N-BASIC 1文字入力待ち
+
+
+def run_player(raw_path, syms, player_raw, vgm_bytes, keys="1\r", dents=None, disk=None):
+    if disk is None:
+        if dents is None:
+            dents = [make_dent("MUSIC   VGM", START_CLSTR, len(vgm_bytes))]
+        disk = make_disk({2: 3, 3: 4, 4: 0xFFFF}, vgm_bytes, dents)
     cpu = setup(raw_path, syms, disk)
     player = open(player_raw, "rb").read()
     cpu.mem[PLAYER_ORG : PLAYER_ORG + len(player)] = player
     cpu.io_in[0x80] = lambda c: 0x00  # YM2203ステータス: BUSYなし
-    cpu.call(PLAYER_ORG)
+
+    feed = list(keys.encode("ascii"))  # メニューへ流し込むキー入力
+
+    def keywait(c):
+        c.a = feed.pop(0) if feed else 0x0D  # 尽きたらEnter→番号0→終了
+        return True  # KEYWAITはA=コードでRET
+
+    cpu.hooks[KEYWAIT] = keywait
+
+    def basic_exit(c):
+        raise Trap("BASIC_EXIT", c)  # JP BASIC 到達=クリーン終了(0入力)
+
+    cpu.hooks[BASIC] = basic_exit
+    try:
+        cpu.call(PLAYER_ORG)
+    except Trap as t:
+        if "BASIC_EXIT" not in t.name:
+            raise
     sound = [(p, v) for p, v in cpu.io_log if p in (0x80, 0x81, 0xA0, 0xA1)]
     return sound, cpu.output.decode("ascii", "replace")
 
@@ -77,6 +100,34 @@ def main():
     check(results, "BAD COMMANDで停止し以降の出力なし",
           "BAD COMMAND" in out and sound == [(0x80, 0x01), (0x81, 0x02)],
           str(sound))
+
+    print("=== ケース6: 複数VGMから番号2を選んで再生")
+    from test_stream_api import (SCTR_SIZE, FAT_SCTR, ROOT_SCTR, DATA_SCTR,
+                                 SCTRS_PER_CLSTR)
+    song1 = make_vgm(ym2203(0x11, 0x11) + END)
+    song2 = make_vgm(ym2203(0x22, 0x22) + END)
+    disk6 = {}
+    fat = bytearray(SCTR_SIZE)
+    fat[2 * 2:2 * 2 + 2] = (0xFFFF).to_bytes(2, "little")
+    fat[5 * 2:5 * 2 + 2] = (0xFFFF).to_bytes(2, "little")
+    disk6[FAT_SCTR] = bytes(fat)
+    root = bytearray(SCTR_SIZE)
+    root[0:32] = make_dent("SONG1   VGM", 2, len(song1))
+    root[32:64] = make_dent("SONG2   VGM", 5, len(song2))
+    disk6[ROOT_SCTR] = bytes(root)
+
+    def place(clstr, content):
+        for s in range(SCTRS_PER_CLSTR):
+            sct = DATA_SCTR + (clstr - 2) * SCTRS_PER_CLSTR + s
+            disk6[sct] = bytes(content[s * SCTR_SIZE:(s + 1) * SCTR_SIZE]
+                               .ljust(SCTR_SIZE, b"\x00"))
+    place(2, song1)
+    place(5, song2)
+    sound, out = run_player(raw_path, syms, player_raw, b"", keys="2\r", disk=disk6)
+    check(results, "一覧にSONG1/SONG2が出る",
+          "1: SONG1.VGM" in out and "2: SONG2.VGM" in out, out.strip())
+    check(results, "番号2でSONG2が再生される",
+          sound == [(0x80, 0x22), (0x81, 0x22)], str(sound))
 
     print()
     if all(results):
