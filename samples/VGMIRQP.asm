@@ -336,6 +336,24 @@ GETB:	PUSH	HL
 	JP	DONE
 
 ;=================================================
+;OPN_WR_RD - YM2203 1レジスタ書込(BUSY待ち入り)
+; IN: D = レジスタ番号, E = データ
+; AF を保存、D/E は破壊しない
+;=================================================
+OPN_WR_RD:
+	PUSH	AF
+.busy:	IN	A,(OPN_ADDR)		;BUSY=bit7
+	RLCA
+	JR	C,.busy
+	LD	A,D
+	OUT	(OPN_ADDR),A
+	LD	A,D			;ダミー命令で短い待ち
+	LD	A,E
+	OUT	(OPN_DATA),A
+	POP	AF
+	RET
+
+;=================================================
 ;WAIT_DE_POLL - Timer Aを走らせ、ステータスのbit0をpollingで待つ
 ; IN: DE = サンプル数
 ;=================================================
@@ -345,19 +363,17 @@ WAIT_DE_POLL:
 	RET	Z
 
 	CALL	CALC_TA_CHUNK		;OUT: BC=今回消費, HL=NA, DE=残り
-	CALL	TA_LOAD_HL		;24H/25Hにプリロード
+	CALL	TA_LOAD_HL		;24H/25Hにプリロード(BUSY待ち込み)
 
 	;flagパルスリセット(1ショット)→ run-only に戻す
-	LD	A,TA_REG_CTRL
-	OUT	(OPN_ADDR),A
-	NOP
-	LD	A,TA_CTRL_RUN_RESET_A
-	OUT	(OPN_DATA),A
-	LD	A,TA_REG_CTRL
-	OUT	(OPN_ADDR),A
-	NOP
-	LD	A,TA_CTRL_RUN_POLL
-	OUT	(OPN_DATA),A
+	PUSH	DE
+	LD	D,TA_REG_CTRL
+	LD	E,TA_CTRL_RUN_RESET_A
+	CALL	OPN_WR_RD
+	LD	D,TA_REG_CTRL
+	LD	E,TA_CTRL_RUN_POLL
+	CALL	OPN_WR_RD
+	POP	DE
 
 	CALL	RB_FILL_OPPORTUNISTIC	;polling前にSD補充
 
@@ -442,48 +458,49 @@ MUL_DE_322:
 	POP	DE
 	RET
 
+;-------------------------------------------------
+;TA_LOAD_HL - 24H/25HへTimer A 10bitプリロードを書く(BUSY待ち込み)
+; IN HL = プリロード値(0..1023)
+; 高位 = HL >> 2 (8bit), 低位 = HL & 3
+;-------------------------------------------------
 TA_LOAD_HL:
+	PUSH	BC
+	PUSH	DE
 	PUSH	HL
 	PUSH	AF
+	LD	C,L			;Cにオリジナル低位を退避(後で &3 する)
+	;高位 = HL >> 2
 	SRL	H
 	RR	L
 	SRL	H
 	RR	L
-	LD	A,TA_REG_HI
-	OUT	(OPN_ADDR),A
-	NOP
-	LD	A,L
-	OUT	(OPN_DATA),A
-	POP	AF
-	POP	HL
-	PUSH	HL
-	PUSH	AF
-	LD	A,L
+	LD	D,TA_REG_HI
+	LD	E,L
+	CALL	OPN_WR_RD
+	;低位2bit
+	LD	A,C
 	AND	03H
-	LD	B,A
-	LD	A,TA_REG_LO
-	OUT	(OPN_ADDR),A
-	NOP
-	LD	A,B
-	OUT	(OPN_DATA),A
+	LD	D,TA_REG_LO
+	LD	E,A
+	CALL	OPN_WR_RD
 	POP	AF
 	POP	HL
+	POP	DE
+	POP	BC
 	RET
 
 ;-------------------------------------------------
-;TA_STOP_POLL - Timer A停止+flagクリア(polling版用)
+;TA_STOP_POLL - Timer A停止+flagクリア(BUSY待ち込み)
 ;-------------------------------------------------
 TA_STOP_POLL:
-	LD	A,TA_REG_CTRL
-	OUT	(OPN_ADDR),A
-	NOP
-	LD	A,TA_CTRL_STOP_RESET
-	OUT	(OPN_DATA),A
-	LD	A,TA_REG_CTRL
-	OUT	(OPN_ADDR),A
-	NOP
-	XOR	A
-	OUT	(OPN_DATA),A
+	PUSH	DE
+	LD	D,TA_REG_CTRL
+	LD	E,TA_CTRL_STOP_RESET
+	CALL	OPN_WR_RD
+	LD	D,TA_REG_CTRL
+	LD	E,0
+	CALL	OPN_WR_RD
+	POP	DE
 	RET
 
 ;-------------------------------------------------
