@@ -72,7 +72,8 @@ IVR_FMTA_DEFAULT	EQU	04H	;INT4..7のうちFM Timer A用に選んだvector
 RBUF_SIZE	EQU	4500H		;約17.25KB
 INITFILL	EQU	2000H		;起動時部分プリフィル(8KB)
 RBUF_HIWATER	EQU	RBUF_SIZE - 0100H
-FILL_BURST	EQU	04H
+FILL_BURST	EQU	04H		;通常補充の1回あたり最大バイト数
+FILL_FORCED	EQU	10H		;強制補充(バッファ枯渇近く)時のバイト数 (大きく)
 FILL_MINSAMP	EQU	40H		;チャンクがこの値未満なら SD 補充スキップ(短wait保護)
 FILL_LWMARK	EQU	0AH		;リングバッファ残量がこの値未満(高位8bit比較)で強制補充
 
@@ -85,9 +86,12 @@ TPSV_LO:	DB	33		;9005H POKE: TICKS_PER_SAMPLE_X256 の低位 (=33で289)
 TPSV_HI:	DB	1		;9006H POKE: TICKS_PER_SAMPLE_X256 の高位 (=1で +256)
 FILL_MINSAMPV:	DB	FILL_MINSAMP	;9007H POKE: チャンクサンプル数下限(これ未満は補充スキップ)
 FILL_LWMARKV:	DB	FILL_LWMARK	;9008H POKE: バッファ残量下限(*256bytes 単位、未満で強制補充)
+FILL_FORCEDV:	DB	FILL_FORCED	;9009H POKE: 強制補充時のバイト数 (大きい値でバッファ確保)
 				;・テンポ調整(9005H): 大きくするとテンポが遅くなる、小さくすると速くなる
+				;・通常補充(9004H): 中wait のときの補充バイト数。小さくすると引っかかり減
+				;・強制補充(9009H): 残量低下時のバイト数。大きくしても引っかかるのは一瞬
 				;・SD補充頻度(9007H/9008H): 短wait連発で律速されるなら 9007H を増やす(64→128等)
-				;  バッファ枯渇するなら 9008H を増やす(10→20等)、9004Hを増やす(4→8等)
+				;  バッファ枯渇するなら 9008H を増やす(10→20等)、9009Hを増やす(16→24等)
 
 START:
 	LD	(SAVSP),SP		;BASIC復帰用のSP保存
@@ -742,9 +746,14 @@ RB_FILL_OPPORTUNISTIC:
 	CP	C
 	JR	NC,.done		;C < FILL_MINSAMP → スキップ
 .fill_now:
-.must_fill:
 	;(c) 通常補充
 	LD	A,(FILL_BURSTV)
+	JR	.do_fill
+
+.must_fill:
+	;(a-result) 強制補充(残量低下時) → 大きめのバイト数で一気に
+	LD	A,(FILL_FORCEDV)
+.do_fill:
 	OR	A
 	JR	Z,.done
 	LD	B,A
