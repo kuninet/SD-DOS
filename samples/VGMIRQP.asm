@@ -96,8 +96,8 @@ MENU:
 ;-------------------------------------------------
 DONE:
 	LD	SP,(PLAYSP)
-	CALL	TA_STOP_POLL		;Timer A停止のみ。IRQ環境は触っていない
-	EI				;PLAY中にDIしていたのを戻す
+	CALL	TA_STOP_POLL		;Timer A停止 + flagクリア
+	EI				;polling中にDIしてた可能性に備え保険
 	CALL	STRM_CLOSE
 	LD	HL,MSG_END
 	CALL	PUTS
@@ -364,11 +364,14 @@ OPN_WR_RD:
 ;=================================================
 ;WAIT_DE_POLL - Timer Aを走らせ、ステータスのbit0をpollingで待つ
 ; IN: DE = サンプル数
+;・polling中だけ DI して /IRQ を CPU 側でブロックする
+;・抜ける前に Timer A 停止+flagクリアして /IRQ を降ろしてから EI
 ;=================================================
 WAIT_DE_POLL:
+	DI				;polling 区間だけ割込み禁止
 .LOOP:	LD	A,D
 	OR	E
-	RET	Z
+	JR	Z,.done
 
 	CALL	CALC_TA_CHUNK		;OUT: BC=今回消費, HL=NA, DE=残り
 	CALL	TA_LOAD_HL		;24H/25Hにプリロード(BUSY待ち込み)
@@ -398,11 +401,19 @@ WAIT_DE_POLL:
 	JR	NZ,.poll
 	;タイムアウト
 	POP	BC
+	CALL	TA_STOP_POLL		;/IRQを降ろしてから戻る
+	EI
 	LD	HL,MSG_TIMEOUT
 	JP	ABORT
 .hit:	POP	BC
 
 	JR	.LOOP
+
+.done:
+	;Timer A 停止して /IRQ を降ろしてから EI で抜ける
+	CALL	TA_STOP_POLL
+	EI
+	RET
 
 ;-------------------------------------------------
 ;CALC_TA_CHUNK / MUL_DE_322 / TA_LOAD_HL は VGMIRQ と同一
@@ -647,7 +658,9 @@ PLAY_FILE:
 	CALL	PARSE_HDR
 	CALL	RB_PREFILL
 	;念のため Timer A を停止状態にしておく(N-BASIC 起動直後の状態保証)
-	DI				;STRM_*でEIされている可能性に備え再DI
+	;DI はここでは行わない。WAIT_DE_POLL 内の polling 中だけ DI して
+	;Timer A の /IRQ が N-BASIC ISR (IM1 RST 38H 等) へ飛ばないように
+	;局所的にブロックする。
 	CALL	TA_STOP_POLL
 	JP	PLAY
 .nf:	LD	HL,MSG_NF
