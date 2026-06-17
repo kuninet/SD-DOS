@@ -626,21 +626,29 @@ TA_STOP_POLL:
 
 ;-------------------------------------------------
 ;RB_FILL_OPPORTUNISTIC - HALT(polling)前にSD補充
+;・DE/HL/BC を保存(呼出側 WAIT_DE_POLL が DE=残りサンプル数を持っているため)
 ;-------------------------------------------------
 RB_FILL_OPPORTUNISTIC:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
 	LD	HL,(RB_CNT)
 	LD	DE,RBUF_HIWATER
 	OR	A
 	SBC	HL,DE
-	RET	NC
+	JR	NC,.done
 	LD	A,(FILL_BURSTV)
 	OR	A
-	RET	Z
+	JR	Z,.done
 	LD	B,A
 .lp:	CALL	RB_TRYFILL1
 	JR	NC,.done
 	DJNZ	.lp
-.done:	RET
+.done:
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
 
 ;-------------------------------------------------
 ;リングバッファ(VGMIRQと同じ)
