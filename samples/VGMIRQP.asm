@@ -67,9 +67,6 @@ DBG_RSV1:	DB	0		;9004H —\–ñ
 DBG_RSV2:	DB	0		;9005H —\–ñ
 
 START:
-	DI				;polling’†‚ÍŠ„ž‚ÝŠ®‘S‹ÖŽ~(YM2203 /IRQ
-					; ‚ªIRQEN A=1‚Å—§‚Á‚Ä‚à N-BASIC IM2
-					; vector ‚Ö”ò‚Î‚È‚¢‚æ‚¤‚É)
 	LD	(SAVSP),SP
 	LD	SP,STACK_TOP
 
@@ -100,6 +97,7 @@ MENU:
 DONE:
 	LD	SP,(PLAYSP)
 	CALL	TA_STOP_POLL		;Timer A’âŽ~‚Ì‚ÝBIRQŠÂ‹«‚ÍG‚Á‚Ä‚¢‚È‚¢
+	EI				;PLAY’†‚ÉDI‚µ‚Ä‚¢‚½‚Ì‚ð–ß‚·
 	CALL	STRM_CLOSE
 	LD	HL,MSG_END
 	CALL	PUTS
@@ -112,6 +110,7 @@ ABORT:
 	LD	SP,(PLAYSP)
 	PUSH	HL
 	CALL	TA_STOP_POLL
+	EI
 	CALL	STRM_CLOSE
 	POP	HL
 	CALL	PUTS
