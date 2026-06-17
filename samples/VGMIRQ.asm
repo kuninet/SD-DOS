@@ -15,6 +15,7 @@
 ;・使い方: LOAD "VGMIRQ.CMT" :(必要ならCD): モニタG9000
 ;   現在ディレクトリの*.VGM一覧 → 番号+Enterで再生 → 0/Enterで終了
 ;・POKE点: 9003H=IVR_FMTAV(vector番号) 9004H=FILL_BURSTV(補充回数)
+;         9005H/9006H=TPSV_LO/TPSV_HI(TICKS_PER_SAMPLE 校正値、16bit、テンポ調整)
 ;・実機確認(Phase 0)で校正する定数: IVR_FMTA_DEFAULT, TICKS_PER_SAMPLE_X256
 ;・ヘッダ=header.md コマンド=commands.md 入出力=sound-io.md (docs/vgm/)
 ;=================================================
@@ -45,18 +46,19 @@ TA_CTRL_RUN_IRQEN	EQU	00000101B	;LoadA=1, IRQEN A=1
 TA_CTRL_STOP_RESET	EQU	00010000B	;ResetA=1
 TA_FLAG_RESET_A_MASK	EQU	00010000B	;bit4 (Timer A flag reset)
 
-;--- VGMサンプル -> Timer A tick 変換 (Phase 0 実機で校正) ---
+;--- VGMサンプル -> Timer A tick 変換 ---
 ;1サンプル = 1/44100s ≒ 22.676us
-;YM2203 Timer A 1 tick = 72/master_clock; 4MHz想定 -> 18us
-;ticks_per_sample = 22.676 / 18 ≒ 1.260
-;*256固定小数: round(1.260 * 256) = 322
-TICKS_PER_SAMPLE_X256	EQU	322
+;YM2203 Timer A 1 tick = 72/master_clock
+; ・実機マスタークロック 3.579545MHz の場合 → 1 tick ≒ 20.11us
+;ticks_per_sample = 22.676 / 20.11 ≒ 1.128
+;*256固定小数: round(1.128 * 256) = 289 = 0x121 = 256 + 32 + 1
+TICKS_PER_SAMPLE_X256	EQU	289
 MAX_SAMPLES_PER_CHUNK	EQU	512
 MAX_CHUNK_HI	EQU	02H		;512の高位
 MAX_CHUNK_LO	EQU	00H		;512の低位
 ;NA = 1024 - (MAX_SAMPLES_PER_CHUNK * TICKS_PER_SAMPLE_X256 / 256)
-;   = 1024 - 645 = 379
-NA_MAX_CHUNK	EQU	379
+;   = 1024 - 578 = 446
+NA_MAX_CHUNK	EQU	446
 
 ;--- IM2 ベクタテーブル ($8000台RAM、N-BASICが配置) ---
 IVT_PAGE	EQU	80H		;Iレジスタ値(=テーブルページ)
@@ -77,7 +79,10 @@ FILL_BURST	EQU	04H
 	JP	START			;9000H 実行エントリ(モニタG9000)
 IVR_FMTAV:	DB	IVR_FMTA_DEFAULT	;9003H POKE: FM Timer A IRQ vector番号
 FILL_BURSTV:	DB	FILL_BURST	;9004H POKE: HALT前の補充回数上限
-TA_NA_LO_DBG:	DB	0		;9005H 予約(デバッグ用)
+TPSV_LO:	DB	33		;9005H POKE: TICKS_PER_SAMPLE_X256 の低位 (=33で289)
+TPSV_HI:	DB	1		;9006H POKE: TICKS_PER_SAMPLE_X256 の高位 (=1で +256)
+				;実機 3.579545MHz想定 → 289 (0x121) で +/-3%程度のテンポを
+				;POKEで微調整できる。大きくするとテンポが遅くなる。
 
 START:
 	LD	(SAVSP),SP		;BASIC復帰用のSP保存
@@ -387,6 +392,11 @@ WAIT_DE_HALT:
 
 	CALL	CALC_TA_CHUNK		;OUT: BC=今回消費, HL=NA, DE=残り
 
+	;新NAを確実に効かせるため Timer A を一度停止+flagクリアしてから
+	;プリロードを書き換え、Reset→Start で再起動する
+	;(走行中に24H/25Hを書き換えても次のoverflowまで反映されないため、
+	; 最初のHALTが前ループの残り時間で抜けてテンポが乱れる対策)
+	CALL	TA_STOP
 	CALL	TA_LOAD_HL		;24H/25Hへ書き込み
 
 	XOR	A
@@ -394,7 +404,7 @@ WAIT_DE_HALT:
 
 	CALL	TA_START		;27H <- LoadA|IRQEN A
 
-	CALL	RB_FILL_OPPORTUNISTIC	;HALT前にSD補充(BC=今回サンプル数)
+	CALL	RB_FILL_OPPORTUNISTIC	;HALT前にSD補充
 
 	EI
 	HALT				;Timer A IRQで起きる
@@ -441,11 +451,11 @@ CALC_TA_CHUNK:
 	RET
 
 .SHORT:
-	;tick = DE * TICKS_PER_SAMPLE_X256 / 256
+	;tick = DE * (TPSV_HI:TPSV_LO の16bit値) / 256
 	;BC = DE(消費), HL = 1024 - tick, DE = 0
 	LD	B,D
 	LD	C,E			;BC = DE(退避)
-	CALL	MUL_DE_322		;HL = (DE * 322) >> 8
+	CALL	MUL_DE_TPS		;HL = (DE * TPS) >> 8 (TPS は 9005/9006 から読む)
 	;NA = 1024 - HL
 	PUSH	HL
 	LD	HL,1024
@@ -465,42 +475,41 @@ CALC_TA_CHUNK:
 	RET
 
 ;-------------------------------------------------
-;MUL_DE_322 - HL = (DE * 322) >> 8 を16bit範囲で計算
-; 322 = 0x142 = 256 + 64 + 2
-; DE * 322 = DE*256 + DE*64 + DE*2
-; >>8     -> DE + (DE>>2) + (DE>>7)
-; DE<=511 なら DE*322 <= 164542(17bit), >>8 <= 642(10bit) で安全
+;MUL_DE_TPS - HL = (DE * TPS) >> 8
+; TPS は 9005H/9006H に置かれた 16bit 値 (POKE 校正可能)
+; ・前提: TPSV_HI=1 固定 (実機 3.579545MHz 想定で十分)
+;   → HL = DE + (DE * TPSV_LO) >> 8
+; ・DE <= 511, TPSV_LO <= 255 で DE*TPSV_LO <= 130305 (17bit)
+;   17bit キャリーを A に取り込んでから >>8 する
+; IN  : DE
+; OUT : HL
+; 破壊: AF, BC。DE は保存
 ;-------------------------------------------------
-MUL_DE_322:
-	;HL = DE
-	LD	H,D
-	LD	L,E
-	;HL += DE >> 2
+MUL_DE_TPS:
+	PUSH	BC
 	PUSH	DE
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
+	LD	A,(TPSV_LO)
+	LD	C,A			;C = TPSV_LO (8bit 乗数)
+	LD	HL,0			;HL = 累算下位
+	XOR	A			;A = 累算上位 (DE*Cの17/24bit用)
+	LD	B,8
+.lp:
+	ADD	HL,HL
+	ADC	A,A			;24bit累算: A:HL <<= 1
+	SLA	C
+	JR	NC,.skip
 	ADD	HL,DE
+	ADC	A,0			;桁上がりを A に取り込む
+.skip:
+	DJNZ	.lp
+	;A:HL = DE × TPSV_LO (最大18bit想定だが実用上17bit)
+	;>>8 : 結果の上位16bit を HL に
+	LD	L,H
+	LD	H,A
 	POP	DE
-	;HL += DE >> 7
-	PUSH	DE
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
+	;HL += DE (TPSV_HI=1 ぶん)
 	ADD	HL,DE
-	POP	DE
+	POP	BC
 	RET
 
 ;-------------------------------------------------
