@@ -6,6 +6,50 @@ SD-DOSの読み出し経路の検証(scripts/test_multicluster.py)に必要な�
 
 S, Z, H, PV, N, C = 0x80, 0x40, 0x10, 0x04, 0x02, 0x01
 
+# 命令ごとの基本 T-states テーブル(条件付きジャンプは not-taken 側、
+# taken は分岐実行時に +5(JR cc, CALL cc) / +6(RET cc) / +5(DJNZ) を加算)
+# CB/ED/DD/FD プレフィクスはここでは prefix 1 バイト分の 4T のみ計上し、
+# sub オペコードの追加 T-states は分岐内で加算する
+_BASE_T = [
+    # 0x00 - 0x0F
+    4, 10,  7,  6,  4,  4,  7,  4,  4, 11,  7,  6,  4,  4,  7,  4,
+    # 0x10 - 0x1F  (DJNZ=8 not-taken, JR=12)
+    8, 10,  7,  6,  4,  4,  7,  4, 12, 11,  7,  6,  4,  4,  7,  4,
+    # 0x20 - 0x2F  (JR cc=7 not-taken)
+    7, 10, 16,  6,  4,  4,  7,  4,  7, 11, 16,  6,  4,  4,  7,  4,
+    # 0x30 - 0x3F
+    7, 10, 13,  6, 11, 11, 10,  4,  7, 11, 13,  6,  4,  4,  7,  4,
+    # 0x40 - 0x47 LD B,r
+    4, 4, 4, 4, 4, 4, 7, 4,
+    # 0x48 - 0x4F LD C,r
+    4, 4, 4, 4, 4, 4, 7, 4,
+    # 0x50 - 0x57 LD D,r
+    4, 4, 4, 4, 4, 4, 7, 4,
+    # 0x58 - 0x5F LD E,r
+    4, 4, 4, 4, 4, 4, 7, 4,
+    # 0x60 - 0x67 LD H,r
+    4, 4, 4, 4, 4, 4, 7, 4,
+    # 0x68 - 0x6F LD L,r
+    4, 4, 4, 4, 4, 4, 7, 4,
+    # 0x70 - 0x77 LD (HL),r (0x76=HALT)
+    7, 7, 7, 7, 7, 7, 4, 7,
+    # 0x78 - 0x7F LD A,r
+    4, 4, 4, 4, 4, 4, 7, 4,
+    # 0x80 - 0xBF ALU A,r (r=(HL) は 7、それ以外 4)
+    4, 4, 4, 4, 4, 4, 7, 4,  4, 4, 4, 4, 4, 4, 7, 4,
+    4, 4, 4, 4, 4, 4, 7, 4,  4, 4, 4, 4, 4, 4, 7, 4,
+    4, 4, 4, 4, 4, 4, 7, 4,  4, 4, 4, 4, 4, 4, 7, 4,
+    4, 4, 4, 4, 4, 4, 7, 4,  4, 4, 4, 4, 4, 4, 7, 4,
+    # 0xC0 - 0xCF
+    5, 10, 10, 10, 10, 11, 7, 11,   5, 10, 10, 4, 10, 17, 7, 11,
+    # 0xD0 - 0xDF
+    5, 10, 10, 11, 10, 11, 7, 11,   5, 4, 10, 11, 10, 4, 7, 11,
+    # 0xE0 - 0xEF (EX (SP),HL=19, JP (HL)=4, ED prefix=4)
+    5, 10, 10, 19, 10, 11, 7, 11,   5, 4, 10, 4, 10, 4, 7, 11,
+    # 0xF0 - 0xFF (LD SP,HL=6, FD prefix=4)
+    5, 10, 10, 4, 10, 11, 7, 11,   5, 6, 10, 4, 10, 4, 7, 11,
+]
+
 
 class Trap(Exception):
     """フックアドレスへ到達したことを表す"""
@@ -31,6 +75,12 @@ class Z80:
         self.output = bytearray()  # RSTフック等が捕捉した出力
         self.io_log = []  # OUT (n),A の記録 [(ポート, 値), ...]
         self.io_in = {}  # ポート -> callable(cpu)->値。未登録ポートのINは0FFH
+        # ---- クロックサイクル積算 (cycle accurate 用) ----
+        # step() 内で各命令の T-states を加算する。未対応の命令は概算 4T。
+        # PC-8001 実質クロックは 2MHz 相当なので、実時間化は cycles * 0.5e-6 秒。
+        self.cycles = 0
+        # 命令フック (cycles で時間を進めるためのコールバック等を載せられる)
+        self.io_out_hooks = {}  # ポート -> callable(cpu, value) (OUT 後の追加処理用)
 
     # ---- レジスタペア ----
     def get_bc(self):
@@ -242,9 +292,11 @@ class Z80:
         if self.pc in self.hooks:
             if self.hooks[self.pc](self):
                 self.pc = self.pop()
+                self.cycles += 10  # RET 相当
                 return
         pc0 = self.pc
         op = self.fetch()
+        self.cycles += _BASE_T[op]
 
         if op == 0x00:  # NOP
             return
@@ -312,12 +364,14 @@ class Z80:
                 d = self.fetch()
                 if self.cond((op - 0x20) >> 3):
                     self.pc = (self.pc + (d - 256 if d > 127 else d)) & 0xFFFF
+                    self.cycles += 5  # taken: 7T→12T
                 return
             if op == 0x10:  # DJNZ
                 d = self.fetch()
                 self.b = (self.b - 1) & 0xFF
                 if self.b:
                     self.pc = (self.pc + (d - 256 if d > 127 else d)) & 0xFFFF
+                    self.cycles += 5  # taken: 8T→13T
                 return
             if op == 0x07:  # RLCA
                 c = (self.a >> 7) & 1
@@ -374,10 +428,12 @@ class Z80:
                 if self.cond((op >> 3) & 7):
                     self.push(self.pc)
                     self.pc = a
+                    self.cycles += 7  # taken: 10T→17T
                 return
             if lo == 0:  # RET cc
                 if self.cond((op >> 3) & 7):
                     self.pc = self.pop()
+                    self.cycles += 6  # taken: 5T→11T
                 return
             if op in (0xC5, 0xD5, 0xE5, 0xF5):  # PUSH
                 self.push([self.get_bc(), self.get_de(), self.get_hl(),
@@ -436,37 +492,50 @@ class Z80:
             if op == 0xCB:
                 sub = self.fetch()
                 r, q = sub & 7, (sub >> 3) & 7
+                # T-states (prefix の 4T はすでに加算済み)
+                is_hl = (r == 6)
                 if sub < 0x40:
+                    self.cycles += 11 if is_hl else 4  # 計 15 / 8
                     self.set_r(r, self.cb_op(q, self.get_r(r)))
                 elif sub < 0x80:  # BIT
+                    self.cycles += 8 if is_hl else 4   # 計 12 / 8
                     v = self.get_r(r)
                     self.f = (self.f & C) | H | (0 if v & (1 << q) else Z | PV)
                 elif sub < 0xC0:  # RES
+                    self.cycles += 11 if is_hl else 4  # 計 15 / 8
                     self.set_r(r, self.get_r(r) & ~(1 << q))
                 else:  # SET
+                    self.cycles += 11 if is_hl else 4  # 計 15 / 8
                     self.set_r(r, self.get_r(r) | (1 << q))
                 return
             if op == 0xED:
                 sub = self.fetch()
-                if sub in (0x4B, 0x5B, 0x6B, 0x7B):  # LD dd,(nn)
+                if sub in (0x4B, 0x5B, 0x6B, 0x7B):  # LD dd,(nn) 計20T
+                    self.cycles += 16
                     self.set_ss((sub - 0x4B) >> 4, self.rd16(self.fetch16()))
                     return
-                if sub in (0x43, 0x53, 0x63, 0x73):  # LD (nn),dd
+                if sub in (0x43, 0x53, 0x63, 0x73):  # LD (nn),dd 計20T
+                    self.cycles += 16
                     self.wr16(self.fetch16(), self.get_ss((sub - 0x43) >> 4))
                     return
-                if sub == 0xB0:  # LDIR
+                if sub == 0xB0:  # LDIR ループごとに21T、最後16T (prefix込み)
+                    n = 0
                     while True:
                         self.wr(self.get_de(), self.rd(self.get_hl()))
                         self.set_hl(self.get_hl() + 1)
                         self.set_de(self.get_de() + 1)
                         self.set_bc(self.get_bc() - 1)
+                        n += 1
                         if self.get_bc() == 0:
                             break
+                    # prefix 4T はすでに加算済み。残り: (n-1)×17 + 12
+                    self.cycles += max(0, (n - 1) * 17 + 12)
                     self.f &= ~(H | PV | N)
                     return
                 if sub in (0xA1, 0xA9, 0xB1, 0xB9):  # CPI/CPD/CPIR/CPDR
                     step_ = 1 if sub in (0xA1, 0xB1) else -1
                     rep = sub in (0xB1, 0xB9)
+                    n = 0
                     while True:
                         v = self.rd(self.get_hl())
                         r = (self.a - v) & 0xFF
@@ -477,20 +546,27 @@ class Z80:
                             self.f |= H
                         if self.get_bc() != 0:
                             self.f |= PV
+                        n += 1
                         if not rep or self.get_bc() == 0 or r == 0:
                             break
+                    # CPI/CPD = 16T、CPIR/CPDR = 21T/16T
+                    self.cycles += max(0, (n - 1) * 17 + 12)
                     return
-                if sub == 0xB8:  # LDDR
+                if sub == 0xB8:  # LDDR ループごとに21T、最後16T
+                    n = 0
                     while True:
                         self.wr(self.get_de(), self.rd(self.get_hl()))
                         self.set_hl(self.get_hl() - 1)
                         self.set_de(self.get_de() - 1)
                         self.set_bc(self.get_bc() - 1)
+                        n += 1
                         if self.get_bc() == 0:
                             break
+                    self.cycles += max(0, (n - 1) * 17 + 12)
                     self.f &= ~(H | PV | N)
                     return
-                if sub in (0x42, 0x52, 0x62, 0x72):  # SBC HL,ss
+                if sub in (0x42, 0x52, 0x62, 0x72):  # SBC HL,ss 計15T
+                    self.cycles += 11
                     x, y = self.get_hl(), self.get_ss((sub - 0x42) >> 4)
                     cy = self.f & C
                     r = x - y - cy
@@ -505,54 +581,67 @@ class Z80:
                         self.f |= PV
                     self.set_hl(r & 0xFFFF)
                     return
-                if sub == 0x44:  # NEG
+                if sub == 0x44:  # NEG 計8T
+                    self.cycles += 4
                     self.a = self.sub8(0, self.a)
                     return
                 raise Trap(f"未実装ED {sub:02X} at {pc0:04X}", self)
-            if op in (0xDD, 0xFD):  # IX/IY
+            if op in (0xDD, 0xFD):  # IX/IY (prefix 4T 加算済み)
                 attr = "ix" if op == 0xDD else "iy"
                 sub = self.fetch()
                 xv = getattr(self, attr)
-                if sub == 0x21:
+                if sub == 0x21:  # LD IX,nn 計14T
+                    self.cycles += 10
                     setattr(self, attr, self.fetch16())
                     return
-                if sub == 0x2A:
+                if sub == 0x2A:  # LD IX,(nn) 計20T
+                    self.cycles += 16
                     setattr(self, attr, self.rd16(self.fetch16()))
                     return
-                if sub == 0x22:
+                if sub == 0x22:  # LD (nn),IX 計20T
+                    self.cycles += 16
                     self.wr16(self.fetch16(), xv)
                     return
-                if sub == 0xE5:
+                if sub == 0xE5:  # PUSH IX 計15T
+                    self.cycles += 11
                     self.push(xv)
                     return
-                if sub == 0xE1:
+                if sub == 0xE1:  # POP IX 計14T
+                    self.cycles += 10
                     setattr(self, attr, self.pop())
                     return
-                if sub == 0x23:
+                if sub == 0x23:  # INC IX 計10T
+                    self.cycles += 6
                     setattr(self, attr, (xv + 1) & 0xFFFF)
                     return
-                if sub == 0x2B:
+                if sub == 0x2B:  # DEC IX 計10T
+                    self.cycles += 6
                     setattr(self, attr, (xv - 1) & 0xFFFF)
                     return
-                if sub in (0x09, 0x19, 0x29, 0x39):  # ADD IX,ss
+                if sub in (0x09, 0x19, 0x29, 0x39):  # ADD IX,ss 計15T
+                    self.cycles += 11
                     y = [self.get_bc(), self.get_de(), xv, self.sp][(sub >> 4)]
                     setattr(self, attr, self.add16(xv, y))
                     return
-                if sub == 0xE9:  # JP (IX)
+                if sub == 0xE9:  # JP (IX) 計8T
+                    self.cycles += 4
                     self.pc = xv
                     return
-                if sub == 0x36:  # LD (IX+d),n
+                if sub == 0x36:  # LD (IX+d),n 計19T
+                    self.cycles += 15
                     d = self.fetch()
                     d = d - 256 if d > 127 else d
                     self.wr(xv + d, self.fetch())
                     return
-                if sub == 0x34 or sub == 0x35:  # INC/DEC (IX+d)
+                if sub == 0x34 or sub == 0x35:  # INC/DEC (IX+d) 計23T
+                    self.cycles += 19
                     d = self.fetch()
                     d = d - 256 if d > 127 else d
                     v = self.rd(xv + d)
                     self.wr(xv + d, self.inc8(v) if sub == 0x34 else self.dec8(v))
                     return
                 if 0x40 <= sub <= 0x7F and (sub & 7 == 6 or (sub >> 3) & 7 == 6):
+                    self.cycles += 15  # LD r,(IX+d) / LD (IX+d),r 計19T
                     d = self.fetch()
                     d = d - 256 if d > 127 else d
                     if sub & 7 == 6:  # LD r,(IX+d)
@@ -560,7 +649,8 @@ class Z80:
                     else:  # LD (IX+d),r
                         self.wr(xv + d, self.get_r(sub & 7))
                     return
-                if 0x80 <= sub <= 0xBF and sub & 7 == 6:  # ALU A,(IX+d)
+                if 0x80 <= sub <= 0xBF and sub & 7 == 6:  # ALU A,(IX+d) 計19T
+                    self.cycles += 15
                     d = self.fetch()
                     d = d - 256 if d > 127 else d
                     self.alu((sub >> 3) & 7, self.rd(xv + d))
