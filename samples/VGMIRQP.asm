@@ -536,22 +536,33 @@ TA_STOP_POLL:
 	RET
 
 ;-------------------------------------------------
-;RB_FILL_OPPORTUNISTIC - HALT(polling)前にSD補充
+;RB_FILL_OPPORTUNISTIC - polling 前にSD補充
+; IN  : 引数なし
+; OUT : 引数なし
+; 破壊: AF のみ。BC/DE/HL は呼出側のために保存する
+;       (WAIT_DE_POLL が DE=残りサンプル数を保持しているため)
 ;-------------------------------------------------
 RB_FILL_OPPORTUNISTIC:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
 	LD	HL,(RB_CNT)
 	LD	DE,RBUF_HIWATER
 	OR	A
 	SBC	HL,DE
-	RET	NC
+	JR	NC,.done
 	LD	A,(FILL_BURSTV)
 	OR	A
-	RET	Z
+	JR	Z,.done
 	LD	B,A
 .lp:	CALL	RB_TRYFILL1
 	JR	NC,.done
 	DJNZ	.lp
-.done:	RET
+.done:
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
 
 ;-------------------------------------------------
 ;リングバッファ(VGMIRQと同じ)

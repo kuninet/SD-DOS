@@ -504,69 +504,94 @@ MUL_DE_322:
 	RET
 
 ;-------------------------------------------------
-;TA_LOAD_HL - 24H/25HへTimer A 10bitプリロードを書く
-; IN HL = プリロード値(0..1023)
+;OPN_WR_RD - YM2203 1レジスタ書込(BUSY待ち入り)
+; IN  : D = レジスタ番号, E = データ
+; OUT : 引数なし
+; 破壊: AF のみ。BC/DE/HL は不変
+;-------------------------------------------------
+OPN_WR_RD:
+	PUSH	AF
+.busy:	IN	A,(OPN_ADDR)
+	RLCA
+	JR	C,.busy
+	LD	A,D
+	OUT	(OPN_ADDR),A
+	LD	A,D			;ダミー命令で短い待ち
+	LD	A,E
+	OUT	(OPN_DATA),A
+	POP	AF
+	RET
+
+;-------------------------------------------------
+;TA_LOAD_HL - 24H/25HへTimer A 10bitプリロードを書く(BUSY待し入り)
+; IN  : HL = プリロード値(0..1023)
+; OUT : 引数なし
+; 破壊: AF のみ。BC/DE/HL は呼出側のために保存
+;       (CALC_TA_CHUNK が BC=今回サンプル, DE=残り, HL=NA を持って呼ぶため)
 ; 高位 = HL >> 2 (8bit), 低位 = HL & 3 (下位2bit)
 ;-------------------------------------------------
 TA_LOAD_HL:
+	PUSH	BC
+	PUSH	DE
 	PUSH	HL
 	PUSH	AF
+	LD	C,L			;Cにオリジナル低位を退避
 	;高位 = HL >> 2
 	SRL	H
 	RR	L
 	SRL	H
 	RR	L
-	LD	A,TA_REG_HI
-	OUT	(OPN_ADDR),A
-	NOP
-	LD	A,L
-	OUT	(OPN_DATA),A
-	POP	AF
-	POP	HL
-	PUSH	HL
-	PUSH	AF
+	LD	D,TA_REG_HI
+	LD	E,L
+	CALL	OPN_WR_RD
 	;低位2bit
-	LD	A,L
+	LD	A,C
 	AND	03H
-	LD	B,A
-	LD	A,TA_REG_LO
-	OUT	(OPN_ADDR),A
-	NOP
-	LD	A,B
-	OUT	(OPN_DATA),A
+	LD	D,TA_REG_LO
+	LD	E,A
+	CALL	OPN_WR_RD
 	POP	AF
 	POP	HL
+	POP	DE
+	POP	BC
 	RET
 
 ;-------------------------------------------------
-;TA_START - 27H <- LoadA=1, IRQEN A=1
+;TA_START - 27H <- LoadA=1, IRQEN A=1(BUSY待し入り)
+; IN  : 引数なし
+; OUT : 引数なし
+; 破壊: AF のみ。BC/DE/HL は不変
 ;-------------------------------------------------
 TA_START:
-	LD	A,TA_REG_CTRL
-	OUT	(OPN_ADDR),A
-	NOP
-	LD	A,TA_CTRL_RUN_IRQEN
+	PUSH	DE
+	LD	D,TA_REG_CTRL
+	LD	E,TA_CTRL_RUN_IRQEN
+	LD	A,E
 	LD	(TA_CTRL_SHADOW),A
-	OUT	(OPN_DATA),A
+	CALL	OPN_WR_RD
+	POP	DE
 	RET
 
 ;-------------------------------------------------
-;TA_STOP - Timer Aを停止しflagリセット
+;TA_STOP - Timer Aを停止しflagリセット(BUSY待し入り)
+; IN  : 引数なし
+; OUT : 引数なし
+; 破壊: AF のみ。BC/DE/HL は不変
 ;-------------------------------------------------
 TA_STOP:
-	LD	A,TA_REG_CTRL
-	OUT	(OPN_ADDR),A
-	NOP
-	LD	A,TA_CTRL_STOP_RESET
+	PUSH	DE
+	LD	D,TA_REG_CTRL
+	LD	E,TA_CTRL_STOP_RESET
+	LD	A,E
 	LD	(TA_CTRL_SHADOW),A
-	OUT	(OPN_DATA),A
+	CALL	OPN_WR_RD
 	;resetパルスを落として通常状態へ
-	LD	A,TA_REG_CTRL
-	OUT	(OPN_ADDR),A
-	NOP
-	LD	A,0
+	LD	D,TA_REG_CTRL
+	LD	E,0
+	XOR	A
 	LD	(TA_CTRL_SHADOW),A
-	OUT	(OPN_DATA),A
+	CALL	OPN_WR_RD
+	POP	DE
 	RET
 
 ;-------------------------------------------------
@@ -645,23 +670,33 @@ ISR_FMTA:
 
 ;-------------------------------------------------
 ;RB_FILL_OPPORTUNISTIC - HALT前にリングバッファ補充
-; IN BC = 今回のチャンクサンプル数(将来の調整用、現状未使用)
+; IN  : 引数なし (BC を引数扱いしていた旧仕様は廃止)
+; OUT : 引数なし
+; 破壊: AF のみ。BC/DE/HL は呼出側のために保存
+;       (WAIT_DE_HALT が CALC_TA_CHUNK の戻り値 DE=残りサンプル数,
+;        BC=今回サンプル数を持っているため)
 ;-------------------------------------------------
 RB_FILL_OPPORTUNISTIC:
-	;ほぼ満タン(CNT >= HIWATER)なら何もしない
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
 	LD	HL,(RB_CNT)
 	LD	DE,RBUF_HIWATER
 	OR	A
 	SBC	HL,DE
-	RET	NC
+	JR	NC,.done
 	LD	A,(FILL_BURSTV)
 	OR	A
-	RET	Z
+	JR	Z,.done
 	LD	B,A
 .lp:	CALL	RB_TRYFILL1
 	JR	NC,.done
 	DJNZ	.lp
-.done:	RET
+.done:
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
 
 ;-------------------------------------------------
 ;リングバッファ操作(VGMPLAY.asmから流用)
