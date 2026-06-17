@@ -433,34 +433,49 @@ OPN_WR_RD:
 	RET
 
 ;=================================================
-;WAIT_DE_POLL - Timer Aを走らせ、ステータスのbit0をpollingで待つ
+;WAIT_DE_POLL - Timer A polling 版(細かいマーカー入り)
 ; IN: DE = サンプル数
-;・polling中だけ DI して /IRQ を CPU 側でブロックする
-;・抜ける前に Timer A 停止+flagクリアして /IRQ を降ろしてから EI
+;・マーカー: 1=DI直前 2=DI直後 3=CALC直前 4=CALC後 5=TA_LOAD後
+;            6=27H=15H書込み後 7=27H=05H書込み後 8=SD補充後
+;            ?=polling抜け Z=done到達
 ;=================================================
 WAIT_DE_POLL:
-	DI				;polling 区間だけ割込み禁止
+	LD	A,'1'
+	RST	18H
+	DI
+	LD	A,'2'
+	RST	18H
 .LOOP:	LD	A,D
 	OR	E
 	JR	Z,.done
 
-	CALL	CALC_TA_CHUNK		;OUT: BC=今回消費, HL=NA, DE=残り
-	CALL	TA_LOAD_HL		;24H/25Hにプリロード(BUSY待ち込み)
+	LD	A,'3'
+	RST	18H
+	CALL	CALC_TA_CHUNK
+	LD	A,'4'
+	RST	18H
+	CALL	TA_LOAD_HL
+	LD	A,'5'
+	RST	18H
 
 	;flagパルスリセット(1ショット)→ run-only に戻す
 	PUSH	DE
 	LD	D,TA_REG_CTRL
 	LD	E,TA_CTRL_RUN_RESET_A
 	CALL	OPN_WR_RD
+	LD	A,'6'
+	RST	18H
 	LD	D,TA_REG_CTRL
 	LD	E,TA_CTRL_RUN_POLL
 	CALL	OPN_WR_RD
+	LD	A,'7'
+	RST	18H
 	POP	DE
 
-	CALL	RB_FILL_OPPORTUNISTIC	;polling前にSD補充
+	CALL	RB_FILL_OPPORTUNISTIC
+	LD	A,'8'
+	RST	18H
 
-	;polling: bit0 が立つまで待つ。タイムアウト付き(約0.5秒)。
-	;立たないままタイムアウトしたら ABORT (Timer Aが走っていない)
 	PUSH	BC
 	LD	BC,0
 .poll:	IN	A,(OPN_ADDR)
@@ -472,16 +487,19 @@ WAIT_DE_POLL:
 	JR	NZ,.poll
 	;タイムアウト
 	POP	BC
-	CALL	TA_STOP_POLL		;/IRQを降ろしてから戻る
+	CALL	TA_STOP_POLL
 	EI
 	LD	HL,MSG_TIMEOUT
 	JP	ABORT
 .hit:	POP	BC
+	LD	A,'?'
+	RST	18H
 
 	JR	.LOOP
 
 .done:
-	;Timer A 停止して /IRQ を降ろしてから EI で抜ける
+	LD	A,'Z'
+	RST	18H
 	CALL	TA_STOP_POLL
 	EI
 	RET
