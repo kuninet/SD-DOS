@@ -134,6 +134,12 @@ test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw $(BUILD)/VGMPLAY.raw
 	$(PYTHON) scripts/test_sample.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/SDUMP.raw
 	$(PYTHON) scripts/test_vgmplay.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/VGMPLAY.raw
 
+# VGMプレイヤ cycle-accurate シミュレータ(Issue #68 / VGMIRQ F-1 机上検証)
+# VGMPLAY.sym が必要なため list(=-debug アセンブル)に依存する
+vgmsim: $(BUILD)/MAIN.raw $(BUILD)/VGMPLAY.raw $(BUILD)/VGMPLAY.asm.log.asz
+	$(PYTHON) scripts/vgmsim.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym \
+		$(BUILD)/VGMPLAY.raw $(BUILD)/VGMPLAY.sym
+
 # EPROM書き込み用ROMイメージの一括生成
 ROMDIR       = $(BUILD)/rom
 ROM_DEVICES ?= 27C64 28C64 27C256 28C256 W27C512
@@ -165,4 +171,4 @@ $(BUILD):
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all verify-orig list test rom burn clean
+.PHONY: all verify-orig list test vgmsim rom burn clean

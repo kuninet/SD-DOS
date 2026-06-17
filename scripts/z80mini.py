@@ -477,7 +477,11 @@ class Z80:
             if op in (0xF3, 0xFB):  # DI/EI
                 return
             if op == 0xD3:  # OUT (n),A
-                self.io_log.append((self.fetch(), self.a))
+                port = self.fetch()
+                self.io_log.append((port, self.a))
+                h = self.io_out_hooks.get(port)
+                if h is not None:
+                    h(self, self.a)  # OUT後の追加処理(ログのタイムスタンプ/Timer A捕捉等)
                 return
             if op == 0xDB:  # IN A,(n)
                 port = self.fetch()
