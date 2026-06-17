@@ -22,7 +22,7 @@ ASM = printf 'OK\n' | $(JAVA) -jar $(TOOLS80) -tgt=z80
 
 ASM_SRCS = $(wildcard src/*.asm)
 
-all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt $(BUILD)/VGMPLAY.cmt $(BUILD)/VGMIRQ.cmt $(BUILD)/VGMIRQP.cmt
+all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt $(BUILD)/VGMPLAY.cmt $(BUILD)/VGMIRQ.cmt $(BUILD)/VGMIRQP.cmt $(BUILD)/VGMIRQF.cmt
 
 $(BUILD)/MAIN.cmt: $(ASM_SRCS) | $(BUILD)
 	$(ASM) src/MAIN.asm
@@ -72,6 +72,20 @@ $(BUILD)/VGMIRQ.asm.log.asz: samples/VGMIRQ.asm | $(BUILD)
 	mv samples/VGMIRQ.asm.log.asz $@
 	mv samples/VGMIRQ.sym $(BUILD)/VGMIRQ.sym
 	rm -f samples/VGMIRQ.raw
+
+$(BUILD)/VGMIRQF.cmt: samples/VGMIRQF.asm | $(BUILD)
+	$(ASM) samples/VGMIRQF.asm
+	mv samples/VGMIRQF.cmt $@
+
+$(BUILD)/VGMIRQF.raw: samples/VGMIRQF.asm | $(BUILD)
+	$(ASM) -raw samples/VGMIRQF.asm
+	mv samples/VGMIRQF.raw $@
+
+$(BUILD)/VGMIRQF.asm.log.asz: samples/VGMIRQF.asm | $(BUILD)
+	$(ASM) -raw -debug -sym samples/VGMIRQF.asm
+	mv samples/VGMIRQF.asm.log.asz $@
+	mv samples/VGMIRQF.sym $(BUILD)/VGMIRQF.sym
+	rm -f samples/VGMIRQF.raw
 
 $(BUILD)/VGMIRQP.cmt: samples/VGMIRQP.asm | $(BUILD)
 	$(ASM) samples/VGMIRQP.asm
@@ -137,10 +151,12 @@ test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw $(BUILD)/VGMPLAY.raw
 # VGMプレイヤ cycle-accurate シミュレータ(Issue #68 / VGMIRQ F-1 机上検証)
 # VGMPLAY.sym が必要なため list(=-debug アセンブル)に依存する
 vgmsim: $(BUILD)/MAIN.raw $(BUILD)/VGMPLAY.raw $(BUILD)/VGMPLAY.asm.log.asz \
-        $(BUILD)/VGMIRQ.raw $(BUILD)/VGMIRQ.asm.log.asz
+        $(BUILD)/VGMIRQ.raw $(BUILD)/VGMIRQ.asm.log.asz \
+        $(BUILD)/VGMIRQF.raw $(BUILD)/VGMIRQF.asm.log.asz
 	$(PYTHON) scripts/vgmsim.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym \
 		$(BUILD)/VGMPLAY.raw $(BUILD)/VGMPLAY.sym \
-		$(BUILD)/VGMIRQ.raw $(BUILD)/VGMIRQ.sym
+		$(BUILD)/VGMIRQ.raw $(BUILD)/VGMIRQ.sym \
+		$(BUILD)/VGMIRQF.raw $(BUILD)/VGMIRQF.sym
 
 # EPROM書き込み用ROMイメージの一括生成
 ROMDIR       = $(BUILD)/rom

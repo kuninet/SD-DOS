@@ -432,8 +432,9 @@ def report_irq(name, commands, st):
     print(f"  SD 1byte 読み    : {st['sd_reads']} 回 (うち再生中 {play_reads} 回)")
     print(f"  音源レジスタ書込 : {len(st['opn'])} 回")
     bm = st["buf_min"]
-    print(f"  再生中バッファ最小: {bm if bm is not None else '—'} byte"
-          + ("  ★枯渇(underrun)" if bm == 0 else ""))
+    bm_s = (f"{bm} byte" + ("  ★枯渇(underrun)" if bm == 0 else "")
+            if bm is not None else "—(再生中 SD なし=prefill で充足)")
+    print(f"  再生中バッファ最小: {bm_s}")
     if "error" in st:
         print(f"  ❌ 異常停止       : {st['error']}")
     end_state = ("正常終了(VGM END)" if "VGM END" in st["out"]
@@ -513,6 +514,61 @@ def main():
         ok.append(("Timer A IRQ が発火した",
                    sq.get("timer") is not None and sq["timer"].overflows > 0))
         ok.append(("VGMIRQ で異常停止していない", "error" not in sq))
+
+    # --- F-1(VGMIRQF.asm)の検証(IRQF.raw IRQF.sym が渡されたとき)---
+    if len(sys.argv) >= 9:
+        f_raw, f_sym = sys.argv[7], sys.argv[8]
+        fpsyms = load_symbols(f_sym)
+        SPT_ADR = 0x9004  # SAMPLES_PER_TICK の POKE 点
+
+        print("=== F-1(VGMIRQF.asm)の検証: メイン演奏 + ISR で SD 補充")
+        # (a) 純 wait: Timer A 精密タイミングの証明(テンポ≒1.0 を期待)
+        cf1 = wait(735) * 8 + END
+        sf1 = run_irq(raw_path, syms, fpsyms, f_raw, cf1)
+        report_irq("F-1 (a) 純 wait 735 × 8(Timer A 精度の確認)", cf1, sf1)
+        print()
+
+        # (b) プリフィル(8KB)を超える大トラックで再生中 SD 補充を誘発する。
+        #     1フレーム=OPN×3 + wait735 = 12 byte/frame、≒720 byte/s。
+        #     FN を大きくして総量 > INITFILL にし、ISR の補充が再生中に走るようにする。
+        frm = (ym2203(0x30, 0x11) + ym2203(0x31, 0x22) + ym2203(0x28, 0xF0)) + wait(735)
+        FN = 900
+        cf2 = frm * FN + END  # 約 10.8KB > 8KB prefill
+        sf2 = run_irq(raw_path, syms, fpsyms, f_raw, cf2)
+        report_irq(f"F-1 (b) (OPN×3 + wait735) × {FN}(prefill 超、再生中 SD 補充)",
+                   cf2, sf2)
+        print()
+
+        # (c) Timer A 周期(SPT)スイープ。周期↑で CPU 占有↓・補充レート↓・wait 粗く。
+        #     再生中バッファ最小残量で「補充が間に合うか」を観察する。
+        print("=== F-1 (c) SAMPLES_PER_TICK スイープ(prefill 超トラック)")
+        print("  SPT | テンポ比 | overflow | 再生中SD | バッファ最小")
+        sweep80 = None
+        for spt in (64, 80, 100, 160):
+            s = run_irq(raw_path, syms, fpsyms, f_raw, cf2, pokes={SPT_ADR: spt})
+            pc = (s["play_end"] or 0) - (s["play_start"] or 0)
+            tempo = (pc * CYCLE_US) / (vgm_total_samples(cf2) * SAMPLE_US)
+            ov = s["timer"].overflows if s.get("timer") else 0
+            pr = s["sd_reads"] - s["reads_at_play"]
+            bm = s["buf_min"]
+            flag = " ★枯渇" if bm == 0 else ""
+            print(f"  {spt:3d} |  {tempo:6.3f} | {ov:7d} | {pr:7d} | "
+                  f"{bm if bm is not None else '—'}{flag}")
+            if spt == 80:
+                sweep80 = s
+        print()
+
+        def underrun(s):  # buf_min==0 のみ枯渇。None は再生中 SD なし(prefill 充足)
+            return s["buf_min"] == 0
+
+        ok.append(("F-1 純 wait がほぼ実時間(0.95〜1.05)",
+                   0.95 <= ((sf1["play_end"] - sf1["play_start"]) * CYCLE_US
+                            / (vgm_total_samples(cf1) * SAMPLE_US)) <= 1.05))
+        ok.append(("F-1 が VGM END で終了(大トラック)", "VGM END" in sf2["out"]))
+        ok.append(("F-1 再生中にバッファ枯渇しない(大トラック)", not underrun(sf2)))
+        ok.append(("F-1 で異常停止していない", "error" not in sf2))
+        ok.append(("F-1 で再生中 SD 補充が発生(大トラック)",
+                   sf2["sd_reads"] - sf2["reads_at_play"] > 0))
 
     print("=== 妥当性チェック")
     allok = True
