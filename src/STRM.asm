@@ -308,3 +308,48 @@ STRM_FMT83:
 .end:	XOR	A			;00HèIí[
 	LD	(DE),A			;
 	RET				;
+
+
+
+
+;=================================================
+;[STRM]Create write stream (new/overwrite)
+;IN  HL=filename ptr ("NAME.EXT",00H)
+;OUT CY=0  (caller responsibility: not call while STRM_OPEN active)
+;=================================================
+STRM_CREATE:
+	LD	(ARG0),HL
+	LD	A,0FFH
+	LD	(SD_SND_OFF),A
+	LD	C,ATRB_FILE
+	CALL	PREP_DENT
+	CALL	IS_READ_ONLY
+	CALL	PREP_WRITE
+	CALL	RESTORE_WDIR
+	OR	A
+	RET
+
+;=================================================
+;[STRM]Write 1 byte (caller responsibility: STRM_CREATE was called)
+;IN  A=byte / OUT CY=0
+;Preserves BC/DE/HL via POST_1BYTE EXX. IX saved here.
+;=================================================
+STRM_WRITE:
+	PUSH	IX
+	LD	IX,FILE_BFFR_STRCT
+	CALL	POST_1BYTE
+	POP	IX
+	OR	A
+	RET
+
+;=================================================
+;[STRM]Finalize write stream (caller responsibility: paired with CREATE)
+;IN  - / OUT CY=0
+;=================================================
+STRM_FCLOSE:
+	CALL	FIN_WRITE
+	CALL	WRITE_DENT
+	XOR	A
+	LD	(SD_SND_OFF),A
+	OR	A
+	RET

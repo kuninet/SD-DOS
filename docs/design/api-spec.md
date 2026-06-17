@@ -13,8 +13,11 @@ SD-DOS本体の先頭(ORG 6000H)は現在「DB "AB"(自動起動マーカー)+�
 | 6005H | STRM_OPEN | ストリームを開く |
 | 6008H | STRM_READ | 1バイト取得 |
 | 600BH | STRM_CLOSE | ストリームを閉じる |
-| 600EH | (予約) | 未実装スタブへJP(CY=1、A=0FFHを返す) |
-| 6011H | (予約) | 同上 |
+| 600EH | STRM_DIRLIST | ディレクトリ列挙(1パスで全エントリをバッファへ) |
+| 6011H | STRM_RSVD | 未実装スタブへJP(CY=1、A=0FFHを返す) |
+| 6014H | STRM_CREATE | 書きストリームを開く(新規/上書き) |
+| 6017H | STRM_WRITE | 1バイト書き込み |
+| 601AH | STRM_FCLOSE | 書きストリームを確定して閉じる |
 
 テーブルはすべてのINCLUDEより前に置くため、コードの増減でアドレスが動かない。版間互換のため、エントリの並びは追加のみとし、既存エントリの位置は変えない。利用側はテーブルの固定アドレスをCALLする。
 
@@ -68,6 +71,53 @@ SDアクセス異常、FATリンク異常は初期実装では既存どおり非
 **破壊レジスタ**: AF
 
 **動作**: STRM_STATを「未オープン」にする。読み出し専用のためバッファの書き戻しは不要。
+
+### STRM_CREATE(6014H)
+
+**引数**:
+- HL: ファイル名(パス可)文字列の先頭アドレス(00H終端)
+
+**返却値**: CY=0(成功)。空き容量不足など下層エラー時は既存規約どおりBASICのエラー処理(`JP ERR`)へ落ちる
+
+**破壊レジスタ**: AF、BC、DE、HL、IX
+
+**動作**:
+
+1. SD_SND_OFFを立ててアクセス音を抑止
+2. `PREP_DENT`でディレクトリエントリを準備(同名存在時は流用、無ければ新規作成し開始クラスタを確保)
+3. `IS_READ_ONLY`で読取専用属性のチェック
+4. `PREP_WRITE`でファイルポインタ(FP)を0、開始クラスタをセットし、既存ファイル上書き時は`ERASE_FAT_LINK`で旧FATチェーンを解放、ファイルバッファを初期化
+5. ワーキングディレクトリを復帰
+
+**呼び出し側の責務**: 同時に`STRM_OPEN`(読み)を開始しない。`FILE_BFFR`を共有するため読み書き同時オープンは不可。
+
+### STRM_WRITE(6017H)
+
+**引数**: A=書き込む1バイト
+
+**返却値**: CY=0
+
+**破壊レジスタ**: AFのみ(BC/DE/HL/IXは保存。POST_1BYTEがEXXで主レジスタを退避、IXはここでPUSH/POP)
+
+**動作**: `POST_1BYTE`で(FP)に1バイト書き込み、FP++。セクタ境界で`SAVE_BFFR`で書き戻し、クラスタ境界で`FIND_NULL_CLSTR`+`WRITE_FAT_DATA`によりFATチェーンを自動延長する。空き容量不足は`MSG_MEDIA_FULL`で`JP ERR`(BASIC復帰)。
+
+**呼び出し側の責務**: `STRM_CREATE`成功後にのみ呼ぶ(API側はガードしない)。
+
+### STRM_FCLOSE(601AH)
+
+**引数**: なし
+
+**返却値**: CY=0
+
+**破壊レジスタ**: AF、BC、DE、HL、IX
+
+**動作**:
+
+1. `FIN_WRITE`でFPをdirエントリの`IDX_SIZE`にコピー(ファイルサイズ確定)、最終クラスタのFATエントリを0FFFFHで終端化、ファイル/FAT1/FAT2バッファを`FLUSH_BFFR`で書き戻し
+2. `WRITE_DENT`でディレクトリエントリ(サイズ・開始クラスタ・日時)をメディアへ永続化
+3. SD_SND_OFFを戻す
+
+**呼び出し側の責務**: `STRM_CREATE`と対で呼ぶ(API側はガードしない)。
 
 ## SDアクセス音の抑止
 
@@ -133,7 +183,8 @@ FNAME:	DB	"/MUSIC/SONG.VGM",00H
 
 - FILE_BFFRを既存コマンドと共用するため、ストリーム読み出し中(オープン〜クローズ)はSD-DOSの既存コマンドを使わない([ストリーム読み出しの取得単位とバッファ](buffer-unit.md))
 - STRM_READ/STRM_CLOSEはBC/DE/HL/IXを保存し、AFのみ変化する
-- 本体コード長がローダのコピー長BODY_LEN(現在1A00H)を超えた場合は、LOADER64.asmとscripts/make64kram.pyの定数更新が必要(scripts/make64kram.pyがエラーで検出する)
+- **書きストリームAPI**(STRM_CREATE/STRM_WRITE/STRM_FCLOSE)はFILE_BFFRとFP系ワークを共有する。読みストリームと**同時オープン不可**。`STRM_CREATE`〜`STRM_FCLOSE`の間に他のSD-DOSコマンド/APIを呼ばないこと。最小実装のためAPI側のガードは持たない(呼び順は呼び出し側責任)
+- 本体コード長がローダのコピー長BODY_LEN(現在1C00H)を超えた場合は、LOADER64.asmとscripts/make64kram.pyの定数更新が必要(scripts/make64kram.pyがエラーで検出する)
 
 ## 今後の確認事項
 

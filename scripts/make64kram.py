@@ -19,7 +19,7 @@ import sys
 
 ORG = 0x6000
 LOADER_LEN = 0x4C
-BODY_LEN = 0x1B00  # LOADER64.asmのBODY_LENと一致させること
+BODY_LEN = 0x1C00  # LOADER64.asmのBODY_LENと一致させること
 RECORD_LEN = 16
 
 

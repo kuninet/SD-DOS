@@ -24,6 +24,7 @@ START_CLSTR = 2
 
 STRM_OPEN, STRM_READ, STRM_CLOSE = 0x6005, 0x6008, 0x600B
 STRM_DIRENT, STRM_RSVD = 0x600E, 0x6011  # 600E=ディレクトリ列挙, 6011=予約
+STRM_CREATE, STRM_WRITE, STRM_FCLOSE = 0x6014, 0x6017, 0x601A
 FNAME_ADR = 0x9000
 
 CY = 0x01
@@ -62,7 +63,7 @@ def make_disk(chain, content, dents):
     return disk
 
 
-def setup(raw_path, syms, disk):
+def setup(raw_path, syms, disk, writable=False):
     cpu = Z80()
     raw = open(raw_path, "rb").read()
     cpu.mem[0x6000 : 0x6000 + len(raw)] = raw
@@ -115,7 +116,19 @@ def setup(raw_path, syms, disk):
     cpu.hooks[0x5ED3] = cphlde
     cpu.hooks[0x5FC1] = capital
     cpu.hooks[0x5EC0] = lambda c: True  # PRTHLHEX: 表示は無視
-    cpu.hooks[syms["WRITE_SCTR"]] = err("WRITE_SCTR(書き込みは発生しないはず)")
+    cpu.hooks[0x1602] = lambda c: True  # TIME_READ: 時計読み出しは無視(DT_*は0のまま)
+    # DT_SEC/MIN/HOUR/YEAR/MONTH/DAY は EA76H から並ぶ。0で初期化(BCD2BIN(0)=0)
+    for off in range(8):
+        cpu.mem[0xEA76 + off] = 0
+    if writable:
+        def write_sctr(c):
+            sct = int.from_bytes(bytes(c.mem[syms["DW0"]:syms["DW0"]+4]), "little")
+            src = c.get_hl()
+            disk[sct] = bytes(c.mem[src:src+SCTR_SIZE])
+            return True
+        cpu.hooks[syms["WRITE_SCTR"]] = write_sctr
+    else:
+        cpu.hooks[syms["WRITE_SCTR"]] = err("WRITE_SCTR(書き込みは発生しないはず)")
     cpu.hooks[syms["ERR"]] = err("ERR")
     cpu.hooks[0x3BF9] = err("ERROR")
 
@@ -250,6 +263,130 @@ def main():
     check(results, "0番=SONG1.VGM", bool(names) and names[0] == "SONG1.VGM")
     check(results, "1番=SONG2.VGM", len(names) > 1 and names[1] == "SONG2.VGM")
     check(results, "2番=README.TXT(拡張子整形)", len(names) > 2 and names[2] == "README.TXT")
+
+    # ================================================================
+    # 書きストリームAPI(STRM_CREATE/STRM_WRITE/STRM_FCLOSE)
+    # ================================================================
+
+    def make_empty_disk():
+        """空ルート+空きFATの最小ディスク"""
+        d = {}
+        d[FAT_SCTR] = bytes(SCTR_SIZE)  # FATは全0(全クラスタ空き)
+        d[ROOT_SCTR] = bytes(SCTR_SIZE)  # ルートも空
+        return d
+
+    def read_dent(disk, name83):
+        """ルートからnameのdir entryを探す(32バイト)"""
+        root = disk.get(ROOT_SCTR, b"")
+        for i in range(SCTR_SIZE // 32):
+            e = root[i * 32:i * 32 + 32]
+            if e[0] in (0, 0xE5):
+                continue
+            if e[:11] == name83.encode("ascii"):
+                return e
+        return None
+
+    def stream_write_file(cpu, fname, content):
+        set_fname(cpu, fname)
+        cpu.call(STRM_CREATE)
+        if cpu.f & CY:
+            return False
+        for b in content:
+            cpu.a = b
+            cpu.call(STRM_WRITE)
+            if cpu.f & CY:
+                return False
+        cpu.call(STRM_FCLOSE)
+        return not (cpu.f & CY)
+
+    def stream_read_file(raw_path, syms, disk, fname, expected_size):
+        cpu2 = setup(raw_path, syms, disk, writable=False)
+        set_fname(cpu2, fname)
+        cpu2.call(STRM_OPEN)
+        if cpu2.f & CY:
+            return None, False
+        got = bytearray()
+        try:
+            for _ in range(expected_size + 1):  # +1でEOF判定も兼ねる
+                cpu2.call(STRM_READ)
+                if cpu2.f & CY:
+                    break
+                got.append(cpu2.a)
+        except Trap:
+            return bytes(got), False
+        return bytes(got), True
+
+    # ケースW1: CREATE→クラスタ跨ぎ(2KB+α)→FCLOSE→READで一致
+    print("=== ケースW1: CREATE→マルチクラスタWRITE→FCLOSE→READで一致")
+    size1 = 2 * 1024 + 612
+    content1 = bytes((i * 37 + 1) % 251 for i in range(size1))
+    disk_w1 = make_empty_disk()
+    cpu = setup(raw_path, syms, disk_w1, writable=True)
+    ok = stream_write_file(cpu, "OUT.BIN", content1)
+    check(results, "書き込み一連が成功", ok)
+    got, eof_seen = stream_read_file(raw_path, syms, disk_w1, "OUT.BIN", size1)
+    check(results, f"全{size1}バイト読み戻し", got is not None and len(got) == size1,
+          f"取得={len(got) if got else 0}")
+    check(results, "取得データが一致", got == content1)
+    check(results, "EOFまで読み切る", eof_seen)
+    dent = read_dent(disk_w1, "OUT     BIN")
+    sz_in_dent = int.from_bytes(dent[0x1C:0x20], "little") if dent else -1
+    check(results, f"dir IDX_SIZE={size1}", sz_in_dent == size1, f"got={sz_in_dent}")
+
+    # ケースW2: 空ファイル(CREATE→即FCLOSE)
+    print("=== ケースW2: 空ファイル(CREATE→即FCLOSE)")
+    disk_w2 = make_empty_disk()
+    cpu = setup(raw_path, syms, disk_w2, writable=True)
+    set_fname(cpu, "EMPTY.DAT")
+    cpu.call(STRM_CREATE)
+    check(results, "CREATE成功", not cpu.f & CY)
+    cpu.call(STRM_FCLOSE)
+    check(results, "FCLOSE成功", not cpu.f & CY)
+    dent = read_dent(disk_w2, "EMPTY   DAT")
+    sz = int.from_bytes(dent[0x1C:0x20], "little") if dent else -1
+    check(results, "dir IDX_SIZE=0", sz == 0, f"got={sz}")
+    # 読み戻し:1回READでEOF
+    cpu2 = setup(raw_path, syms, disk_w2, writable=False)
+    set_fname(cpu2, "EMPTY.DAT")
+    cpu2.call(STRM_OPEN)
+    check(results, "OPEN成功", not cpu2.f & CY)
+    cpu2.call(STRM_READ)
+    check(results, "1回READで即EOF(CY=1,A=00H)", bool(cpu2.f & CY) and cpu2.a == 0)
+
+    # ケースW3: クラスタ境界ちょうど(size=1クラスタ=1024B)
+    print("=== ケースW3: クラスタ境界ちょうど(1クラスタ=1024B)")
+    size3 = SCTR_SIZE * SCTRS_PER_CLSTR  # = 1024
+    content3 = bytes((i * 13 + 7) % 251 for i in range(size3))
+    disk_w3 = make_empty_disk()
+    cpu = setup(raw_path, syms, disk_w3, writable=True)
+    ok = stream_write_file(cpu, "EXACT.DAT", content3)
+    check(results, "書き込み一連が成功", ok)
+    got, _ = stream_read_file(raw_path, syms, disk_w3, "EXACT.DAT", size3)
+    check(results, f"全{size3}バイト一致", got == content3)
+    dent = read_dent(disk_w3, "EXACT   DAT")
+    sz = int.from_bytes(dent[0x1C:0x20], "little") if dent else -1
+    check(results, "dir IDX_SIZE=1024", sz == size3, f"got={sz}")
+
+    # ケースW4: 上書き(既存大ファイル→短く書く)
+    print("=== ケースW4: 上書き(大→小、旧チェーン解放)")
+    big_size = 3 * 1024 + 100  # 4クラスタ分
+    big_content = bytes((i + 99) % 251 for i in range(big_size))
+    # 既存ファイル "TARGET.DAT" を 2,3,4,5 のチェーンで作る
+    dent_init = make_dent("TARGET  DAT", 2, big_size)
+    disk_w4 = make_disk({2: 3, 3: 4, 4: 5, 5: 0xFFFF}, big_content, [dent_init])
+    # 新規上書き内容
+    small = b"HELLO\n"
+    cpu = setup(raw_path, syms, disk_w4, writable=True)
+    ok = stream_write_file(cpu, "TARGET.DAT", small)
+    check(results, "上書き成功", ok)
+    got, _ = stream_read_file(raw_path, syms, disk_w4, "TARGET.DAT", len(small))
+    check(results, "読み戻しが新内容と一致", got == small, f"got={got!r}")
+    dent = read_dent(disk_w4, "TARGET  DAT")
+    sz = int.from_bytes(dent[0x1C:0x20], "little") if dent else -1
+    check(results, f"dir IDX_SIZE={len(small)}", sz == len(small), f"got={sz}")
+
+    # NOTE: 最小実装のためガード(未オープンWRITE/読み書き同時)は呼び出し側責任。
+    # 呼び順を守れば動く設計で、ROMサイズ(<=8000H)優先のため安全チェックは省略。
 
     print()
     if all(results):
