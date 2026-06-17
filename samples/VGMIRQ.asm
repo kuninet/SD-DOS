@@ -73,16 +73,21 @@ RBUF_SIZE	EQU	4500H		;約17.25KB
 INITFILL	EQU	2000H		;起動時部分プリフィル(8KB)
 RBUF_HIWATER	EQU	RBUF_SIZE - 0100H
 FILL_BURST	EQU	04H
+FILL_MINSAMP	EQU	40H		;チャンクがこの値未満なら SD 補充スキップ(短wait保護)
+FILL_LWMARK	EQU	0AH		;リングバッファ残量がこの値未満(高位8bit比較)で強制補充
 
 	ORG	9000H
 
 	JP	START			;9000H 実行エントリ(モニタG9000)
 IVR_FMTAV:	DB	IVR_FMTA_DEFAULT	;9003H POKE: FM Timer A IRQ vector番号
-FILL_BURSTV:	DB	FILL_BURST	;9004H POKE: HALT前の補充回数上限
+FILL_BURSTV:	DB	FILL_BURST	;9004H POKE: HALT前の補充回数上限(0で完全停止)
 TPSV_LO:	DB	33		;9005H POKE: TICKS_PER_SAMPLE_X256 の低位 (=33で289)
 TPSV_HI:	DB	1		;9006H POKE: TICKS_PER_SAMPLE_X256 の高位 (=1で +256)
-				;実機 3.579545MHz想定 → 289 (0x121) で +/-3%程度のテンポを
-				;POKEで微調整できる。大きくするとテンポが遅くなる。
+FILL_MINSAMPV:	DB	FILL_MINSAMP	;9007H POKE: チャンクサンプル数下限(これ未満は補充スキップ)
+FILL_LWMARKV:	DB	FILL_LWMARK	;9008H POKE: バッファ残量下限(*256bytes 単位、未満で強制補充)
+				;・テンポ調整(9005H): 大きくするとテンポが遅くなる、小さくすると速くなる
+				;・SD補充頻度(9007H/9008H): 短wait連発で律速されるなら 9007H を増やす(64→128等)
+				;  バッファ枯渇するなら 9008H を増やす(10→20等)、9004Hを増やす(4→8等)
 
 START:
 	LD	(SAVSP),SP		;BASIC復帰用のSP保存
@@ -678,22 +683,45 @@ ISR_FMTA:
 	RETI
 
 ;-------------------------------------------------
-;RB_FILL_OPPORTUNISTIC - HALT前にリングバッファ補充
-; IN  : 引数なし (BC を引数扱いしていた旧仕様は廃止)
+;RB_FILL_OPPORTUNISTIC - HALT前にリングバッファ補充(スマート版)
+;・SD I/O時間がwait短時にHALT待ち時間より長くなる症状の対策
+;・判定:
+;  (a) リングバッファ残量 < (FILL_LWMARKV * 256) なら強制補充(枯渇防止)
+;  (b) チャンクサンプル数(BC) < FILL_MINSAMPV なら補充スキップ(短wait保護)
+;  (c) それ以外は通常補充
+; IN  : BC = 今回のチャンクサンプル数 (CALC_TA_CHUNK の戻り値)
 ; OUT : 引数なし
 ; 破壊: AF のみ。BC/DE/HL は呼出側のために保存
-;       (WAIT_DE_HALT が CALC_TA_CHUNK の戻り値 DE=残りサンプル数,
-;        BC=今回サンプル数を持っているため)
 ;-------------------------------------------------
 RB_FILL_OPPORTUNISTIC:
 	PUSH	BC
 	PUSH	DE
 	PUSH	HL
+
+	;(a) リングバッファ残量チェック (RB_CNT の高位8bit を FILL_LWMARKV と比較)
 	LD	HL,(RB_CNT)
-	LD	DE,RBUF_HIWATER
+	LD	A,(FILL_LWMARKV)
+	CP	H			;CY = (FILL_LWMARK < H) → 残量十分
+	JR	C,.normal		;残量十分 → (b)判定へ
+	JR	NZ,.must_fill		;残量低い → 強制補充
+	;H == FILL_LWMARK のときは L で判定(等しい場合は十分側)
+	LD	A,L
 	OR	A
-	SBC	HL,DE
-	JR	NC,.done
+	JR	NZ,.normal		;Lが0以外なら十分
+	JR	.must_fill		;HL==FILL_LWMARK*256 ちょうどなら補充
+
+.normal:
+	;(b) チャンクサイズチェック (BC < FILL_MINSAMPV ならスキップ)
+	;BC の高位 B が 0 でない (BC >= 256) なら確実に長いチャンク
+	LD	A,B
+	OR	A
+	JR	NZ,.fill_now
+	LD	A,(FILL_MINSAMPV)
+	CP	C
+	JR	NC,.done		;C < FILL_MINSAMP → スキップ
+.fill_now:
+.must_fill:
+	;(c) 通常補充
 	LD	A,(FILL_BURSTV)
 	OR	A
 	JR	Z,.done
