@@ -91,6 +91,10 @@ $(BUILD)/TATEST.cmt: samples/TATEST.asm | $(BUILD)
 	$(ASM) samples/TATEST.asm
 	mv samples/TATEST.cmt $@
 
+$(BUILD)/OPNCHK.cmt: samples/OPNCHK.asm | $(BUILD)
+	$(ASM) samples/OPNCHK.asm
+	mv samples/OPNCHK.cmt $@
+
 # -debugでアセンブルリスト(.log.asz)とシンボル(.sym)、-rawでベタイメージも生成する
 $(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
 	$(ASM) -raw -debug -sym src/MAIN.asm
