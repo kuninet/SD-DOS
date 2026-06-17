@@ -1,17 +1,26 @@
 ;=================================================
-;TATEST - YM2203 Timer A 単体動作確認スケッチ
+;TATEST - YM2203 Timer A 動作切り分けスケッチ(3パターン試行)
 ;=================================================
-;・VGM/SD/メニューなし。起動直後に Timer A の挙動だけを観察する
-;・実機 G9000 で実行する
-;・出力フォーマット:
-;    STAT=AA BB CC DD       ; 起動直後の80Hステータス読み4回
-;    +++++++++++           ; Timer A overflow が来た (10回試行ぶん)
-;    ----------            ; タイムアウト(来なかった)
-;    BUSY=ZZ                ; 最終ステータス読み
-;・Timer A プリロード = 24H/25H ともに 0H → NA=0 → 最大周期 (約18ms @4MHz想定)
-;・27H = 01H (LoadA=1, IRQEN A=0) で起動
-;・タイムアウト判定: polling ループ 32768 回 (~0.2秒 @4MHz)
-;・bit0 (Timer A overflow) を待ち、立てば '+'、ループ上限到達で '-'
+;・3つのパターンで Timer A を起動し、それぞれ 5 回ずつ overflow を polling
+;・各パターン直前に 27H 書込み後の80Hステータスも表示
+;
+;  P1: NA=1023 (24H=FF, 25H=03) → 27H=10H(StopReset) → 27H=01H(LoadA)
+;      ・1 tick で即座にoverflow するはず(プリロード計算と無関係に動作確認)
+;  P2: NA=0    (24H=00, 25H=00) → 27H=10H → 27H=01H
+;      ・最大周期(約18ms @4MHz想定)
+;  P3: NA=0    (24H=00, 25H=00) → 27H=11H(LoadA+ResetA 同時)
+;      ・Load bit の立ち上がりエッジが要る場合の試行
+;
+;・出力:
+;    STAT=AA BB CC DD       ; 起動直後のステータス4回
+;    P1 27H=ZZ +++++         ; パターン1の 27H直後STAT と 5回の結果
+;    P2 27H=ZZ -----         ; パターン2
+;    P3 27H=ZZ +++++         ; パターン3
+;    BUSY=ZZ                ; 最終ステータス
+;
+;・全部 + → Timer A は普通に動く。VGMIRQP の使い方の問題
+;・P1 だけ + → NA=0 が想定通りでない(カウンタリロード仕様の違い)
+;・全部 - → 27H ビット配置 or Timer A クロック供給が想定と違う
 ;=================================================
 
 OPN_ADDR	EQU	80H
@@ -20,9 +29,6 @@ OPN_DATA	EQU	81H
 TA_REG_HI	EQU	24H
 TA_REG_LO	EQU	25H
 TA_REG_CTRL	EQU	27H
-TA_CTRL_RUN_POLL	EQU	01H	;LoadA=1, IRQEN A=0
-TA_CTRL_RESET_A		EQU	11H	;LoadA=1 + ResetA=1 (flagパルスリセット)
-TA_CTRL_STOP_RESET	EQU	10H	;ResetA=1 (停止+flagクリア)
 TA_STAT_FLAG_A_MASK	EQU	01H
 
 CR		EQU	0DH
@@ -32,7 +38,7 @@ BASIC		EQU	0081H
 	ORG	9000H
 
 START:
-	;起動直後の80Hステータスを4回連続で読み、画面に表示する
+	;起動直後の80Hステータスを4回連続で読み表示
 	LD	HL,MSG_STAT
 	CALL	PUTS
 	LD	B,4
@@ -43,65 +49,126 @@ START:
 	DJNZ	.r
 	CALL	CRLF
 
-	;Timer A プリロード = 0
+	;念のため YM2203 を停止状態に
+	LD	D,TA_REG_CTRL
+	LD	E,10H
+	CALL	OPN_WR
+
+	;------------------------------------------
+	;パターン1: NA=1023 (1 tick で即overflow するはず)
+	;------------------------------------------
+	LD	HL,MSG_P1
+	CALL	PUTS
 	LD	D,TA_REG_HI
-	LD	E,0
+	LD	E,0FFH			;NA=1023 の上位8bit
 	CALL	OPN_WR
 	LD	D,TA_REG_LO
-	LD	E,0
+	LD	E,03H			;NA=1023 の下位2bit
 	CALL	OPN_WR
-	;念のため Timer A 停止状態にしておく
-	LD	D,TA_REG_CTRL
-	LD	E,TA_CTRL_STOP_RESET
-	CALL	OPN_WR
-
-	;10回試行
-	LD	B,10
-.loop:
-	;Timer A 起動
-	LD	D,TA_REG_CTRL
-	LD	E,TA_CTRL_RUN_POLL
-	CALL	OPN_WR
-
-	;polling ループ (タイムアウト付き)
-	LD	HL,0
-.pl:	IN	A,(OPN_ADDR)
-	AND	TA_STAT_FLAG_A_MASK
-	JR	NZ,.hit
-	INC	HL
-	LD	A,H
-	CP	80H			;HL > 0x8000 でタイムアウト
-	JR	NZ,.pl
-	LD	A,'-'
-	RST	18H
-	JR	.next
-.hit:	LD	A,'+'
-	RST	18H
-.next:
-	;Timer A flag リセット → 走行状態に戻す
-	LD	D,TA_REG_CTRL
-	LD	E,TA_CTRL_RESET_A
-	CALL	OPN_WR
-	LD	D,TA_REG_CTRL
-	LD	E,TA_CTRL_RUN_POLL
-	CALL	OPN_WR
-	DJNZ	.loop
-
+	LD	A,01H			;StopReset → Load 切替なし、いきなり Load
+	CALL	RUN_AND_POLL
 	CALL	CRLF
 
-	;最終ステータスを表示 (BUSY等の観察)
+	;------------------------------------------
+	;パターン2: NA=0 (最大周期)
+	;------------------------------------------
+	LD	HL,MSG_P2
+	CALL	PUTS
+	LD	D,TA_REG_HI
+	LD	E,00H
+	CALL	OPN_WR
+	LD	D,TA_REG_LO
+	LD	E,00H
+	CALL	OPN_WR
+	LD	A,01H
+	CALL	RUN_AND_POLL
+	CALL	CRLF
+
+	;------------------------------------------
+	;パターン3: NA=0, Reset+Load同時 (27H=11H 一発)
+	;------------------------------------------
+	LD	HL,MSG_P3
+	CALL	PUTS
+	LD	D,TA_REG_HI
+	LD	E,00H
+	CALL	OPN_WR
+	LD	D,TA_REG_LO
+	LD	E,00H
+	CALL	OPN_WR
+	LD	A,11H			;LoadA + ResetA 同時
+	CALL	RUN_AND_POLL
+	CALL	CRLF
+
+	;最終ステータス
 	LD	HL,MSG_BUSY
 	CALL	PUTS
 	IN	A,(OPN_ADDR)
 	CALL	PRHEX2
 	CALL	CRLF
 
-	;Timer A 停止して終了
+	;Timer A 停止
 	LD	D,TA_REG_CTRL
-	LD	E,TA_CTRL_STOP_RESET
+	LD	E,10H
 	CALL	OPN_WR
 
 	JP	BASIC
+
+;-------------------------------------------------
+;RUN_AND_POLL - 27Hに A を書込み、直後STAT表示後 5回polling
+; IN: A = 27H に書く値
+;-------------------------------------------------
+RUN_AND_POLL:
+	;いったん停止
+	PUSH	AF
+	LD	D,TA_REG_CTRL
+	LD	E,10H
+	CALL	OPN_WR
+	;指定値で起動
+	POP	AF
+	LD	D,TA_REG_CTRL
+	LD	E,A
+	CALL	OPN_WR
+
+	;27H書込み直後の STAT 表示
+	LD	HL,MSG_27H
+	CALL	PUTS
+	IN	A,(OPN_ADDR)
+	CALL	PRHEX2
+	LD	A,' '
+	RST	18H
+
+	;5回 polling
+	LD	C,5
+.t:	CALL	POLL_ONCE
+	;flag リセット
+	LD	D,TA_REG_CTRL
+	LD	E,11H
+	CALL	OPN_WR
+	LD	D,TA_REG_CTRL
+	LD	E,01H
+	CALL	OPN_WR
+	DEC	C
+	JR	NZ,.t
+	RET
+
+;-------------------------------------------------
+;POLL_ONCE - bit0 が立つまで polling(タイムアウト約0.5秒)
+;-------------------------------------------------
+POLL_ONCE:
+	LD	HL,0
+.pl:	IN	A,(OPN_ADDR)
+	AND	TA_STAT_FLAG_A_MASK
+	JR	NZ,.hit
+	INC	HL
+	LD	A,H
+	CP	80H
+	JR	NZ,.pl
+	LD	A,'-'
+	RST	18H
+	RET
+.hit:	LD	A,'+'
+	RST	18H
+	RET
 
 ;-------------------------------------------------
 ;OPN_WR - YM2203 1レジスタ書込(BUSY待ち入り)
@@ -109,7 +176,7 @@ START:
 ;-------------------------------------------------
 OPN_WR:
 	PUSH	AF
-.busy:	IN	A,(OPN_ADDR)		;BUSY=bit7
+.busy:	IN	A,(OPN_ADDR)
 	RLCA
 	JR	C,.busy
 	LD	A,D
@@ -120,8 +187,6 @@ OPN_WR:
 	POP	AF
 	RET
 
-;-------------------------------------------------
-;PRHEX2 - A を 16進2桁で表示
 ;-------------------------------------------------
 PRHEX2:
 	PUSH	AF
@@ -156,6 +221,10 @@ PUTS:	LD	A,(HL)
 	JR	PUTS
 
 MSG_STAT:	DB	CR,LF,"STAT=",00H
+MSG_P1:		DB	"P1 ",00H
+MSG_P2:		DB	"P2 ",00H
+MSG_P3:		DB	"P3 ",00H
+MSG_27H:	DB	"27H=",00H
 MSG_BUSY:	DB	"BUSY=",00H
 
 	END
