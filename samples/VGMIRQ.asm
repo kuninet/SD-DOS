@@ -56,9 +56,9 @@ TICKS_PER_SAMPLE_X256	EQU	289
 MAX_SAMPLES_PER_CHUNK	EQU	512
 MAX_CHUNK_HI	EQU	02H		;512の高位
 MAX_CHUNK_LO	EQU	00H		;512の低位
-;NA = 1024 - (MAX_SAMPLES_PER_CHUNK * TICKS_PER_SAMPLE_X256 / 256)
-;   = 1024 - 578 = 446
-NA_MAX_CHUNK	EQU	446
+;LONG分岐のNAは静的固定値ではなく CALC_TA_CHUNK 内で動的に
+;(512 × TPSV / 256) で計算する。これにより 9005H POKE が
+;LONG 分岐にも反映される(VGM 62H=735 / 63H=882 の主要部)。
 
 ;--- IM2 ベクタテーブル ($8000台RAM、N-BASICが配置) ---
 IVT_PAGE	EQU	80H		;Iレジスタ値(=テーブルページ)
@@ -440,10 +440,32 @@ CALC_TA_CHUNK:
 	CP	MAX_CHUNK_LO
 	JR	C,.SHORT
 .LONG:
-	;BC = MAX, HL = NA_MAX_CHUNK, DE -= BC
-	LD	BC,MAX_SAMPLES_PER_CHUNK
-	LD	HL,NA_MAX_CHUNK
+	;DE>=512 のときは MAX_SAMPLES_PER_CHUNK ぶんを 1 チャンクで消費する。
+	;NA は固定値 NA_MAX_CHUNK ではなく、TPSV を反映した動的計算にする
+	;(POKE で TPSV_LO を変えたら LONG 分岐の wait もテンポに追従するため)
+	PUSH	DE			;元の残り(=入力DE)を保存
+	LD	D,02H
+	LD	E,00H			;DE = MAX_SAMPLES_PER_CHUNK (= 512)
+	CALL	MUL_DE_TPS		;HL = (512 × TPS) >> 8 (DEは復元される)
+	;NA = 1024 - HL
 	PUSH	HL
+	LD	HL,1024
+	POP	DE
+	OR	A
+	SBC	HL,DE			;HL = NA
+	;NAが0以下なら1にクランプ
+	LD	A,H
+	OR	A
+	JR	NZ,.lOK
+	LD	A,L
+	OR	A
+	JR	NZ,.lOK
+	LD	HL,1
+.lOK:
+	;DE = 元の残り - 512、BC = 512
+	POP	DE			;元の残りを復元
+	LD	BC,MAX_SAMPLES_PER_CHUNK
+	PUSH	HL			;NA を退避
 	LD	HL,0
 	LD	A,E
 	SUB	C
@@ -451,8 +473,8 @@ CALC_TA_CHUNK:
 	LD	A,D
 	SBC	A,B
 	LD	H,A
-	EX	DE,HL			;DE = 残り - BC
-	POP	HL
+	EX	DE,HL			;DE = 残り - 512
+	POP	HL			;HL = NA
 	RET
 
 .SHORT:
