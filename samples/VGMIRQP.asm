@@ -385,9 +385,22 @@ WAIT_DE_POLL:
 
 	CALL	RB_FILL_OPPORTUNISTIC	;polling前にSD補充
 
-.poll:	IN	A,(OPN_ADDR)		;ステータス読み(bit0=Timer A overflow)
+	;polling: bit0 が立つまで待つ。タイムアウト付き(約0.5秒)。
+	;立たないままタイムアウトしたら ABORT (Timer Aが走っていない)
+	PUSH	BC
+	LD	BC,0
+.poll:	IN	A,(OPN_ADDR)
 	AND	TA_STAT_FLAG_A_MASK
-	JR	Z,.poll
+	JR	NZ,.hit
+	INC	BC
+	LD	A,B
+	CP	80H
+	JR	NZ,.poll
+	;タイムアウト
+	POP	BC
+	LD	HL,MSG_TIMEOUT
+	JP	ABORT
+.hit:	POP	BC
 
 	JR	.LOOP
 
@@ -826,6 +839,7 @@ MSG_NOTVGM:	DB	CR,LF,"NOT VGM",CR,LF,00H
 MSG_BADHDR:	DB	CR,LF,"BAD HEADER",CR,LF,00H
 MSG_BADCMD:	DB	CR,LF,"BAD COMMAND",CR,LF,00H
 MSG_END:	DB	CR,LF,"VGM END",CR,LF,00H
+MSG_TIMEOUT:	DB	CR,LF,"TIMER A TIMEOUT",CR,LF,00H
 
 ;-------------------------------------------------
 SAVSP:		DS	2
