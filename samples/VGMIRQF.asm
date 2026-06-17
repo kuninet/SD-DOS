@@ -70,6 +70,21 @@ INITFILL	EQU	2000H		;起動時部分プリフィル(8KB)
 SAMPLES_PER_TICK	EQU	80	;1tick=80サンプル≒1.81ms(周期/CPU占有のスイートスポット)
 FILL_PER_TICK	EQU	01H		;1tickあたりのSD補充バイト数
 
+;--- 進行状況表示 / セーフティ(実機デバッグ用。RST 18Hで1文字出力)---
+;PROGRESS=1 で再生開始までの段階マーカー O/H/P/I を表示し、
+;Timer A tick が来ない/バッファ枯渇したらタイムアウトで X/U を出して先へ進む
+;(ハードハングを防ぎ、ISR が回っているかを画面で切り分けられる)。
+;  O=STRM_OPEN H=ヘッダ解析 P=プレフィル I=IRQ設定 → PLAY
+;  X=Timer A tick が来ない(ISR/割り込みが回っていない)
+;  U=バッファ枯渇(ISR が SD 補充できていない)
+PROGRESS	EQU	1
+CH_O	EQU	4FH		;'O'
+CH_H	EQU	48H		;'H'
+CH_P	EQU	50H		;'P'
+CH_I	EQU	49H		;'I'
+CH_X	EQU	58H		;'X'
+CH_U	EQU	55H		;'U'
+
 	ORG	9000H
 
 	JP	START			;9000H 実行エントリ(モニタG9000)
@@ -357,6 +372,10 @@ SKIP:	LD	A,D
 GETB:	PUSH	HL			;HL/DE/BCを保存(呼び出し側がHLを多用)
 	PUSH	DE
 	PUSH	BC
+  IF PROGRESS
+	LD	HL,0			;空スピンのタイムアウト計数をリセット
+	LD	(GETB_TO),HL
+  ENDIF
 .try:	CALL	RB_GET_SAFE		;リングバッファから取得(IRQ中はDI/EIで排他)
 	JR	NC,.GOT
 	LD	A,(RB_EOF)		;空かつ読みが終端に達していれば
@@ -364,8 +383,22 @@ GETB:	PUSH	HL			;HL/DE/BCを保存(呼び出し側がHLを多用)
 	JR	NZ,.EOF			;再生終了へ
 	LD	A,(IRQ_ACTIVE)		;IRQ稼働中?
 	OR	A
-	JR	NZ,.try			;稼働中: ISRの補充を待って再取得
-	CALL	STRM_READ		;非稼働中: 直接読み(空かつ終端でない)
+	JR	Z,.fallback		;非稼働中: 直接読み(空かつ終端でない)
+  IF PROGRESS
+	LD	HL,(GETB_TO)		;稼働中の空: ISR補充待ち。タイムアウトで打ち切る
+	INC	HL
+	LD	(GETB_TO),HL
+	LD	A,H
+	OR	L
+	JR	NZ,.try			;65536回(約6ms)まではISR補充を待つ
+	LD	A,CH_U			;'U' = バッファ枯渇(ISRがSD補充できていない)
+	RST	18H
+	JR	.EOF			;枯渇は終了扱いでメニューへ(ハードハング防止)
+  ELSE
+	JR	.try			;稼働中: ISRの補充を待って再取得
+  ENDIF
+.fallback:
+	CALL	STRM_READ		;非稼働中の直接読み
 	JR	C,.RDEOF
 .GOT:	POP	BC
 	POP	DE
@@ -430,11 +463,24 @@ WAIT_DE_POLL:
 ;-------------------------------------------------
 WAIT_ONE_TICK:
 	PUSH	BC
+	PUSH	HL
 	LD	A,(TA_TICKS)
 	LD	C,A
+	LD	B,08H			;外側タイムアウト(8×65536回 ≒ 約13ms。正常tick 1.81msより十分長い)
+.w0:	LD	HL,0
 .w:	LD	A,(TA_TICKS)
 	CP	C
-	JR	Z,.w			;変化するまで待つ(ISRが++する)
+	JR	NZ,.done		;tickが来た(ISRが++した)
+	INC	HL
+	LD	A,H
+	OR	L
+	JR	NZ,.w
+	DJNZ	.w0
+  IF PROGRESS
+	LD	A,CH_X			;'X' = tickが来ない(ISR/Timer Aが回っていない)。先へ進む
+	RST	18H
+  ENDIF
+.done:	POP	HL
 	POP	BC
 	RET
 
@@ -770,11 +816,27 @@ PLAY_FILE:
 	LD	HL,PLAYNAME
 	CALL	STRM_OPEN
 	JR	C,.nf
+  IF PROGRESS
+	LD	A,CH_O			;'O' = STRM_OPEN 成功
+	RST	18H
+  ENDIF
 	LD	(PLAYSP),SP		;再生中の脱出点
 	CALL	RB_INIT
 	CALL	PARSE_HDR		;ヘッダ解析(まだIRQ非稼働=直接読み)
+  IF PROGRESS
+	LD	A,CH_H			;'H' = ヘッダ解析 完了
+	RST	18H
+  ENDIF
 	CALL	RB_PREFILL		;部分プリフィル(起動を速く)
+  IF PROGRESS
+	LD	A,CH_P			;'P' = プリフィル 完了(先頭はバッファ済み)
+	RST	18H
+  ENDIF
 	CALL	IRQ_SETUP		;ここからISRがSD補充+tickを刻む
+  IF PROGRESS
+	LD	A,CH_I			;'I' = IRQ設定 完了 → PLAY へ
+	RST	18H
+  ENDIF
 	JP	PLAY
 .nf:	LD	HL,MSG_NF
 	CALL	PUTS
@@ -1000,6 +1062,7 @@ TA_TICKS:	DS	1			;ISRが進めるtickカウンタ(8bit、wrap可)
 TA_CTRL_SHADOW:	DS	1			;27Hに書いた制御バイト
 WCREDIT:	DS	2			;待ちオーバーシュートの繰越サンプル
 IRQ_ACTIVE:	DS	1			;1=ISR稼働中(RB_GET/GETBの排他切替)
+GETB_TO:	DS	2			;GETB空スピンのタイムアウト計数(PROGRESS用)
 
 ;ISRが割り込み中にコード中最も深い STRM_READ(セクタ/クラスタ跨ぎで MMC_BRD_CMD/
 ;READ_FAT がさらに再帰)をメインのスタック上にネストするため、VGMPLAY(256)より
