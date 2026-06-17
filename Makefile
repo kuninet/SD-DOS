@@ -95,6 +95,10 @@ $(BUILD)/OPNCHK.cmt: samples/OPNCHK.asm | $(BUILD)
 	$(ASM) samples/OPNCHK.asm
 	mv samples/OPNCHK.cmt $@
 
+$(BUILD)/TIMRSEE.cmt: samples/TIMRSEE.asm | $(BUILD)
+	$(ASM) samples/TIMRSEE.asm
+	mv samples/TIMRSEE.cmt $@
+
 # -debugでアセンブルリスト(.log.asz)とシンボル(.sym)、-rawでベタイメージも生成する
 $(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
 	$(ASM) -raw -debug -sym src/MAIN.asm
