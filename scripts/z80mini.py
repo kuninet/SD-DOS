@@ -81,6 +81,17 @@ class Z80:
         self.cycles = 0
         # 命令フック (cycles で時間を進めるためのコールバック等を載せられる)
         self.io_out_hooks = {}  # ポート -> callable(cpu, value) (OUT 後の追加処理用)
+        # ---- 割り込み (Timer A IRQ 等の検証用) ----
+        # irq_poll が None の間は割り込み機構は完全に無効で、HALT は従来どおり
+        # Trap を送出する(既存テストとの互換)。irq_poll を設定すると HALT は
+        # INT 待ちになり、step() 入口で irq_poll が返したベクタで割り込みを受理する。
+        self.iff1 = 0          # 割り込み許可フリップフロップ
+        self.iff2 = 0          # (RETN/NMI 用。LD A,I の PV へ反映)
+        self.im = 0            # 割り込みモード 0/1/2
+        self.i = 0             # I レジスタ (IM2 のベクタ上位バイト)
+        self.halted = False    # HALT 待機中
+        self._ei_block = False  # EI 直後 1 命令は割り込みを受理しない
+        self.irq_poll = None   # callable(cpu) -> ベクタ下位バイト or None
 
     # ---- レジスタペア ----
     def get_bc(self):
@@ -288,7 +299,36 @@ class Z80:
             self.f |= H
         return r & 0xFFFF
 
+    def _accept_int(self, vec):
+        """マスカブル割り込みを受理する。iff をクリアし PC を退避して ISR へ。"""
+        self.iff1 = 0
+        self.iff2 = 0
+        self.push(self.pc)
+        if self.im == 2:
+            ptr = ((self.i & 0xFF) << 8) | (vec & 0xFF)
+            self.pc = self.rd16(ptr)
+            self.cycles += 19
+        else:  # IM 1 (IM 0 も最小実装として 0038H へ)
+            self.pc = 0x0038
+            self.cycles += 13
+
     def step(self):
+        # ---- 割り込み(irq_poll 設定時のみ有効)----
+        if self.irq_poll is not None:
+            accept = self.iff1 and not self._ei_block
+            self._ei_block = False
+            vec = self.irq_poll(self) if accept else None
+            if self.halted:
+                if vec is not None:
+                    self.halted = False
+                    self.pc = (self.pc + 1) & 0xFFFF  # HALT の次へ復帰させる
+                    self._accept_int(vec)
+                else:
+                    self.cycles += 4  # HALT 中は NOP 相当で時間だけ進める
+                return
+            if vec is not None:
+                self._accept_int(vec)
+                return
         if self.pc in self.hooks:
             if self.hooks[self.pc](self):
                 self.pc = self.pop()
@@ -301,7 +341,11 @@ class Z80:
         if op == 0x00:  # NOP
             return
         if op == 0x76:
-            raise Trap("HALT", self)
+            if self.irq_poll is None:
+                raise Trap("HALT", self)  # 割り込み機構なし: 従来どおり停止扱い
+            self.halted = True
+            self.pc = (self.pc - 1) & 0xFFFF  # PC を HALT に留め、INT で抜ける
+            return
         if 0x40 <= op <= 0x7F:  # LD r,r'
             self.set_r((op >> 3) & 7, self.get_r(op & 7))
             return
@@ -474,7 +518,13 @@ class Z80:
             if op == 0xF9:  # LD SP,HL
                 self.sp = self.get_hl()
                 return
-            if op in (0xF3, 0xFB):  # DI/EI
+            if op == 0xF3:  # DI
+                self.iff1 = self.iff2 = 0
+                self._ei_block = False
+                return
+            if op == 0xFB:  # EI (割り込み許可は次の1命令後)
+                self.iff1 = self.iff2 = 1
+                self._ei_block = True
                 return
             if op == 0xD3:  # OUT (n),A
                 port = self.fetch()
@@ -588,6 +638,29 @@ class Z80:
                 if sub == 0x44:  # NEG 計8T
                     self.cycles += 4
                     self.a = self.sub8(0, self.a)
+                    return
+                if sub == 0x47:  # LD I,A 計9T
+                    self.cycles += 5
+                    self.i = self.a
+                    return
+                if sub == 0x57:  # LD A,I 計9T (PV<-IFF2)
+                    self.cycles += 5
+                    self.a = self.i
+                    self.f = ((self.f & C) | (self.i & S) |
+                              (Z if self.i == 0 else 0) | (PV if self.iff2 else 0))
+                    return
+                if sub in (0x46, 0x56, 0x5E):  # IM 0/1/2 計8T
+                    self.cycles += 4
+                    self.im = {0x46: 0, 0x56: 1, 0x5E: 2}[sub]
+                    return
+                if sub == 0x4D:  # RETI 計14T
+                    self.cycles += 10
+                    self.pc = self.pop()
+                    return
+                if sub == 0x45:  # RETN 計14T (IFF1<-IFF2)
+                    self.cycles += 10
+                    self.pc = self.pop()
+                    self.iff1 = self.iff2
                     return
                 raise Trap(f"未実装ED {sub:02X} at {pc0:04X}", self)
             if op in (0xDD, 0xFD):  # IX/IY (prefix 4T 加算済み)

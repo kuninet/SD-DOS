@@ -136,9 +136,11 @@ test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw $(BUILD)/VGMPLAY.raw
 
 # VGMプレイヤ cycle-accurate シミュレータ(Issue #68 / VGMIRQ F-1 机上検証)
 # VGMPLAY.sym が必要なため list(=-debug アセンブル)に依存する
-vgmsim: $(BUILD)/MAIN.raw $(BUILD)/VGMPLAY.raw $(BUILD)/VGMPLAY.asm.log.asz
+vgmsim: $(BUILD)/MAIN.raw $(BUILD)/VGMPLAY.raw $(BUILD)/VGMPLAY.asm.log.asz \
+        $(BUILD)/VGMIRQ.raw $(BUILD)/VGMIRQ.asm.log.asz
 	$(PYTHON) scripts/vgmsim.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym \
-		$(BUILD)/VGMPLAY.raw $(BUILD)/VGMPLAY.sym
+		$(BUILD)/VGMPLAY.raw $(BUILD)/VGMPLAY.sym \
+		$(BUILD)/VGMIRQ.raw $(BUILD)/VGMIRQ.sym
 
 # EPROM書き込み用ROMイメージの一括生成
 ROMDIR       = $(BUILD)/rom

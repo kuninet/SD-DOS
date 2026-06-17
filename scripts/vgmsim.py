@@ -48,6 +48,58 @@ HOOK_RET_T = 10        # setup() のフックは RET 相当で 10T 計上済み
 PLAYER_ORG = 0x9000
 BASIC = 0x0081
 KEYWAIT = 0x0F75
+IVR_FMTAV = 0x9003  # VGMIRQ/VGMIRQF 共通: FM Timer A IRQ ベクタ番号の POKE 点
+
+# YM2203 Timer A: 1 tick = 72/master_clock。master=3.579545MHz、@2MHz 換算。
+TA_TICK_CYCLES = (72.0 / 3_579_545) / (CYCLE_US * 1e-6)  # ≒ 40.23 cycles/tick
+
+
+class TimerA:
+    """YM2203 Timer A の最小モデル(周期 overflow + IRQ + ステータス flag)。
+
+    レジスタは OUT 80H(アドレス)→OUT 81H(データ)の 2 段書きで届くため、
+    呼び出し側が reg/val を解決して write() を呼ぶ。27H のビット配置:
+      bit0=LoadA(計数開始) bit2=IRQEN A bit4=ResetA(flag クリア)
+    """
+
+    def __init__(self):
+        self.reg24 = self.reg25 = 0
+        self.running = False
+        self.irqen = False
+        self.flag = False          # overflow flag(ResetA まで保持)
+        self.na = 0
+        self.period = 0.0          # overflow 周期(cycles)
+        self.next_ovf = 0.0
+        self.overflows = 0
+
+    def write(self, reg, val, cycles):
+        if reg == 0x24:
+            self.reg24 = val & 0xFF
+        elif reg == 0x25:
+            self.reg25 = val & 0x03
+        elif reg == 0x27:
+            load = bool(val & 0x01)
+            self.irqen = bool(val & 0x04)
+            if val & 0x10:                 # ResetA: overflow flag をクリア
+                self.flag = False
+            if load and not self.running:  # LoadA 0->1: NA ロードして計数開始
+                self.na = (self.reg24 << 2) | (self.reg25 & 3)
+                self.period = max(1.0, (1024 - self.na) * TA_TICK_CYCLES)
+                self.next_ovf = cycles + self.period
+                self.running = True
+            elif not load:
+                self.running = False
+
+    def poll(self, cycles):
+        """時間経過に合わせて overflow を反映する(自動リロードで周期動作)。"""
+        if self.running and self.period > 0:
+            while cycles >= self.next_ovf:
+                self.flag = True
+                self.overflows += 1
+                self.next_ovf += self.period
+
+    def status(self):
+        return 0x01 if self.flag else 0x00  # bit0=Timer A flag, bit7(BUSY)=0
 
 
 def make_sim(raw_path, syms, disk):
@@ -238,6 +290,158 @@ def report(name, commands, st):
     return tempo
 
 
+def run_irq(raw_path, syms, psyms, player_raw, commands, keys="1\r",
+            pokes=None, max_steps=200_000_000):
+    """割り込み駆動プレイヤ(VGMIRQ/VGMIRQF)を Timer A モデル付きで実行する。
+
+    YM2203 のレジスタ書きは OUT 80H(アドレス)→OUT 81H(データ)で届くので、
+    81H フックで reg を解決し、24/25/27H なら Timer A へ、その他は音源書込みとして
+    記録する。Timer A の overflow を割り込み源(irq_poll)に接続して F-1 / HALT 方式
+    どちらの ISR も実コードのまま走らせる。
+    """
+    vgm = make_vgm(commands)
+    dents = [make_dent("MUSIC   VGM", START_CLSTR, len(vgm))]
+    ncls = max(1, (len(vgm) + 1023) // 1024)
+    chain = {START_CLSTR + k: (0xFFFF if k == ncls - 1 else START_CLSTR + k + 1)
+             for k in range(ncls)}
+    disk = make_disk(chain, vgm, dents)
+
+    cpu = make_sim(raw_path, syms, disk)
+    player = open(player_raw, "rb").read()
+    cpu.mem[PLAYER_ORG:PLAYER_ORG + len(player)] = player
+    for adr, val in (pokes or {}).items():
+        cpu.mem[adr] = val & 0xFF
+
+    timer = TimerA()
+    vec_byte = cpu.mem[IVR_FMTAV]  # IM2 のデバイス供給バイト(=ベクタ番号)
+
+    # ステータス(IN 80H): bit0=Timer A flag, bit7=BUSY=0。読み時も時刻を反映
+    def status_in(c):
+        timer.poll(c.cycles)
+        return timer.status()
+
+    cpu.io_in[0x80] = status_in
+
+    # 割り込み源: Timer A overflow かつ IRQEN なら IM2 ベクタ番号を返す
+    def irq_poll(c):
+        timer.poll(c.cycles)
+        return vec_byte if (timer.flag and timer.irqen) else None
+
+    cpu.irq_poll = irq_poll
+
+    st = {"play_start": None, "play_end": None, "reads_at_play": 0,
+          "sd_reads": 0, "sd_cost": 0, "opn": [], "buf_min": None,
+          "underrun": 0, "out": ""}
+    RB_CNT = psyms["RB_CNT"]
+    RB_EOF = psyms["RB_EOF"]
+
+    def rb_cnt():
+        return cpu.mem[RB_CNT] | (cpu.mem[RB_CNT + 1] << 8)
+
+    # YM2203 レジスタ書きの解決(80H=アドレス, 81H=データ)
+    sel = {"reg": 0}
+
+    def on_addr(c, v):
+        sel["reg"] = v
+
+    def on_data(c, v):
+        reg = sel["reg"]
+        if reg in (0x24, 0x25, 0x27):
+            timer.write(reg, v, c.cycles)
+        else:
+            st["opn"].append((c.cycles, 0x81, reg, v))  # 音源レジスタ書込み
+
+    cpu.io_out_hooks[0x80] = on_addr
+    cpu.io_out_hooks[0x81] = on_data
+    for p in (0xA0, 0xA1):
+        cpu.io_out_hooks[p] = lambda c, v, p=p: st["opn"].append((c.cycles, p, None, v))
+
+    def on_play(c):
+        if st["play_start"] is None:
+            st["play_start"] = c.cycles
+            st["reads_at_play"] = st["sd_reads"]
+        return None
+
+    def on_done(c):
+        if st["play_end"] is None:
+            st["play_end"] = c.cycles
+        return None
+
+    cpu.hooks[psyms["PLAY"]] = on_play
+    cpu.hooks[psyms["DONE"]] = on_done
+
+    wrapped_1rd = cpu.hooks[syms["MMC_1RD"]]
+
+    def count_1rd(c, inner=wrapped_1rd):
+        st["sd_reads"] += 1
+        st["sd_cost"] += MMC_1RD_T
+        # 再生中のバッファ最小残量(枯渇=underrun を検出)
+        if st["play_start"] is not None:
+            cnt = rb_cnt()
+            if st["buf_min"] is None or cnt < st["buf_min"]:
+                st["buf_min"] = cnt
+        return inner(c)
+
+    cpu.hooks[syms["MMC_1RD"]] = count_1rd
+
+    feed = list(keys.encode("ascii"))
+
+    def keywait(c):
+        c.a = feed.pop(0) if feed else 0x0D
+        return True
+
+    cpu.hooks[KEYWAIT] = keywait
+    cpu.hooks[BASIC] = lambda c: (_ for _ in ()).throw(Trap("BASIC_EXIT", c))
+
+    try:
+        cpu.call(PLAYER_ORG, max_steps=max_steps)
+    except Trap as t:
+        if "BASIC_EXIT" not in t.name:
+            st["out"] = cpu.output.decode("ascii", "replace")
+            st["error"] = t.name
+            st["timer"] = timer
+            if st["play_end"] is None:
+                st["play_end"] = cpu.cycles
+            st["total_cycles"] = cpu.cycles
+            return st
+
+    if st["play_end"] is None:
+        st["play_end"] = cpu.cycles
+    st["out"] = cpu.output.decode("ascii", "replace")
+    st["total_cycles"] = cpu.cycles
+    st["timer"] = timer
+    return st
+
+
+def report_irq(name, commands, st):
+    samples = vgm_total_samples(commands)
+    theo_us = samples * SAMPLE_US
+    play_cyc = (st["play_end"] or 0) - (st["play_start"] or 0)
+    sim_us = play_cyc * CYCLE_US
+    tempo = (sim_us / theo_us) if theo_us else float("nan")
+    timer = st.get("timer")
+
+    print(f"=== {name}")
+    print(f"  VGM 理論再生時間 : {theo_us / 1000:9.2f} ms ({samples} samples)")
+    print(f"  シミュレータ経過 : {sim_us / 1000:9.2f} ms ({play_cyc} cycles)")
+    print(f"  テンポ比 sim/理論: {tempo:6.3f}  "
+          f"({'遅い' if tempo > 1.02 else '速い' if tempo < 0.98 else 'ほぼ一致'})")
+    if timer is not None:
+        print(f"  Timer A overflow : {timer.overflows} 回 (IRQ 発火)")
+    play_reads = st["sd_reads"] - st["reads_at_play"]
+    print(f"  SD 1byte 読み    : {st['sd_reads']} 回 (うち再生中 {play_reads} 回)")
+    print(f"  音源レジスタ書込 : {len(st['opn'])} 回")
+    bm = st["buf_min"]
+    print(f"  再生中バッファ最小: {bm if bm is not None else '—'} byte"
+          + ("  ★枯渇(underrun)" if bm == 0 else ""))
+    if "error" in st:
+        print(f"  ❌ 異常停止       : {st['error']}")
+    end_state = ("正常終了(VGM END)" if "VGM END" in st["out"]
+                 else st["out"].strip().replace("\r\n", " ")[:50] or "(出力なし)")
+    print(f"  終了状態         : {end_state}")
+    return tempo
+
+
 def main():
     if len(sys.argv) < 5:
         print("usage: vgmsim.py MAIN.raw MAIN.sym VGMPLAY.raw VGMPLAY.sym",
@@ -295,6 +499,21 @@ def main():
                st2["sd_reads"] - st2["reads_at_play"] > 0))
     # YM2203 書込み 1 回 = OUT 80H(reg)+OUT 81H(data) の 2 ポート書込み
     ok.append(("ポート書込み数が一致(12×2×300)", len(st2["opn"]) == 12 * 2 * FRAMES))
+    # --- 割り込み駆動プレイヤの検証(IRQ.raw IRQ.sym が渡されたとき)---
+    if len(sys.argv) >= 7:
+        irq_raw, irq_sym = sys.argv[5], sys.argv[6]
+        ipsyms = load_symbols(irq_sym)
+        print("=== 割り込み機構の検証(既存 VGMIRQ.asm = HALT + IM2 を実行)")
+        # 短いトラックで Timer A IRQ 経路を確認(wait 735 × 8 + end)
+        cmdq = wait(735) * 8 + END
+        sq = run_irq(raw_path, syms, ipsyms, irq_raw, cmdq)
+        report_irq("VGMIRQ: wait 735 × 8(HALT 方式)", cmdq, sq)
+        print()
+        ok.append(("VGMIRQ が VGM END で終了", "VGM END" in sq["out"]))
+        ok.append(("Timer A IRQ が発火した",
+                   sq.get("timer") is not None and sq["timer"].overflows > 0))
+        ok.append(("VGMIRQ で異常停止していない", "error" not in sq))
+
     print("=== 妥当性チェック")
     allok = True
     for label, cond in ok:
