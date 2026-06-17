@@ -87,6 +87,10 @@ $(BUILD)/VGMIRQP.asm.log.asz: samples/VGMIRQP.asm | $(BUILD)
 	mv samples/VGMIRQP.sym $(BUILD)/VGMIRQP.sym
 	rm -f samples/VGMIRQP.raw
 
+$(BUILD)/TATEST.cmt: samples/TATEST.asm | $(BUILD)
+	$(ASM) samples/TATEST.asm
+	mv samples/TATEST.cmt $@
+
 # -debugでアセンブルリスト(.log.asz)とシンボル(.sym)、-rawでベタイメージも生成する
 $(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
 	$(ASM) -raw -debug -sym src/MAIN.asm
