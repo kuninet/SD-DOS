@@ -103,6 +103,14 @@ $(BUILD)/TATEST3.cmt: samples/TATEST3.asm | $(BUILD)
 	$(ASM) samples/TATEST3.asm
 	mv samples/TATEST3.cmt $@
 
+$(BUILD)/POLL10.cmt: samples/POLL10.asm | $(BUILD)
+	$(ASM) samples/POLL10.asm
+	mv samples/POLL10.cmt $@
+
+$(BUILD)/VGMIRQM.cmt: samples/VGMIRQM.asm | $(BUILD)
+	$(ASM) samples/VGMIRQM.asm
+	mv samples/VGMIRQM.cmt $@
+
 # -debugでアセンブルリスト(.log.asz)とシンボル(.sym)、-rawでベタイメージも生成する
 $(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
 	$(ASM) -raw -debug -sym src/MAIN.asm
