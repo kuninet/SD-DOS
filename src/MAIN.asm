@@ -26,6 +26,9 @@ DEBUG	EQU	FALSE				;
 	JP	STRM_CLOSE			;600BH ストリームを閉じる
 	JP	STRM_DIRLIST		;600EH ディレクトリ列挙(全ファイル名を一括取得)
 	JP	STRM_RSVD			;6011H 予約
+	JP	STRM_CREATE			;6014H Create write stream
+	JP	STRM_WRITE			;6017H Write 1 byte
+	JP	STRM_FCLOSE			;601AH Finalize and close write stream
 
 INIT:
 
