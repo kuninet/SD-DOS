@@ -313,7 +313,10 @@ def run_irq(raw_path, syms, psyms, player_raw, commands, keys="1\r",
         cpu.mem[adr] = val & 0xFF
 
     timer = TimerA()
-    vec_byte = cpu.mem[IVR_FMTAV]  # IM2 のデバイス供給バイト(=ベクタ番号)
+    # IM2 のデバイス供給バイト(=ベクタ番号)。POKE 点はプレイヤごとに違う
+    # (VGMIRQ/VGMIRQF=9003H, VGMIRQS=9004H)ので .sym の IVR_FMTAV 番地から読む。
+    ivr_adr = psyms.get("IVR_FMTAV", IVR_FMTAV)
+    vec_byte = cpu.mem[ivr_adr]
 
     # ステータス(IN 80H): bit0=Timer A flag, bit7=BUSY=0。読み時も時刻を反映
     def status_in(c):

@@ -22,7 +22,7 @@ ASM = printf 'OK\n' | $(JAVA) -jar $(TOOLS80) -tgt=z80
 
 ASM_SRCS = $(wildcard src/*.asm)
 
-all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt $(BUILD)/VGMPLAY.cmt $(BUILD)/VGMIRQ.cmt $(BUILD)/VGMIRQP.cmt $(BUILD)/VGMIRQF.cmt
+all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt $(BUILD)/VGMPLAY.cmt $(BUILD)/VGMIRQ.cmt $(BUILD)/VGMIRQP.cmt $(BUILD)/VGMIRQF.cmt $(BUILD)/VGMIRQS.cmt
 
 $(BUILD)/MAIN.cmt: $(ASM_SRCS) | $(BUILD)
 	$(ASM) src/MAIN.asm
@@ -86,6 +86,20 @@ $(BUILD)/VGMIRQF.asm.log.asz: samples/VGMIRQF.asm | $(BUILD)
 	mv samples/VGMIRQF.asm.log.asz $@
 	mv samples/VGMIRQF.sym $(BUILD)/VGMIRQF.sym
 	rm -f samples/VGMIRQF.raw
+
+$(BUILD)/VGMIRQS.cmt: samples/VGMIRQS.asm | $(BUILD)
+	$(ASM) samples/VGMIRQS.asm
+	mv samples/VGMIRQS.cmt $@
+
+$(BUILD)/VGMIRQS.raw: samples/VGMIRQS.asm | $(BUILD)
+	$(ASM) -raw samples/VGMIRQS.asm
+	mv samples/VGMIRQS.raw $@
+
+$(BUILD)/VGMIRQS.asm.log.asz: samples/VGMIRQS.asm | $(BUILD)
+	$(ASM) -raw -debug -sym samples/VGMIRQS.asm
+	mv samples/VGMIRQS.asm.log.asz $@
+	mv samples/VGMIRQS.sym $(BUILD)/VGMIRQS.sym
+	rm -f samples/VGMIRQS.raw
 
 $(BUILD)/VGMIRQP.cmt: samples/VGMIRQP.asm | $(BUILD)
 	$(ASM) samples/VGMIRQP.asm
