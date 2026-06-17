@@ -99,6 +99,10 @@ $(BUILD)/TIMRSEE.cmt: samples/TIMRSEE.asm | $(BUILD)
 	$(ASM) samples/TIMRSEE.asm
 	mv samples/TIMRSEE.cmt $@
 
+$(BUILD)/TATEST3.cmt: samples/TATEST3.asm | $(BUILD)
+	$(ASM) samples/TATEST3.asm
+	mv samples/TATEST3.cmt $@
+
 # -debugでアセンブルリスト(.log.asz)とシンボル(.sym)、-rawでベタイメージも生成する
 $(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
 	$(ASM) -raw -debug -sym src/MAIN.asm
