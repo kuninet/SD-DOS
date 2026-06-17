@@ -634,9 +634,10 @@ IRQ_SETUP:
 	LD	HL,0			;クレジット初期化
 	LD	(WCREDIT),HL
 	CALL	CALC_TA_NA		;HL = SPTVサンプル周期のNA
+	LD	(TA_NA),HL		;ISRが毎tick再ロードするため保存
 	CALL	TA_STOP
 	CALL	TA_LOAD_HL		;24H/25Hへプリロード
-	CALL	TA_START		;LoadA|IRQEN で連続起動
+	CALL	TA_START		;LoadA|IRQEN で起動(以後はISRが毎tick再起動)
 	LD	A,0FFH			;割り込み稼働フラグON(GETB/RB_GET_SAFEの排他切替)
 	LD	(IRQ_ACTIVE),A
 	EI
@@ -668,17 +669,14 @@ IRQ_TEARDOWN:
 ISR_FMTA:
 	EX	AF,AF'
 	EXX				;BC/DE/HLを裏レジスタへ退避
-	;Timer A overflow flagをパルスリセット
-	LD	A,TA_REG_CTRL
-	OUT	(OPN_ADDR),A
-	LD	A,(TA_CTRL_SHADOW)
-	LD	B,A
-	OR	TA_FLAG_RESET_A_MASK
-	OUT	(OPN_DATA),A
-	LD	A,TA_REG_CTRL		;resetパルスを戻す(shadow=LoadA|IRQEN)
-	OUT	(OPN_ADDR),A
-	LD	A,B
-	OUT	(OPN_DATA),A
+	;Timer A を停止→リロード→再起動して次のオーバーフローを確実に再武装する。
+	;連続(auto-reload)モードで flag リセットのみだと実機で2発目以降の IRQ エッジが
+	;出ない(VGMIRQ が per-chunk で stop→load→start するのと同じ理由)。
+	;TA_STOP が ResetA でフラグ消去+LoadA=0、TA_START で LoadA|IRQEN 再開。
+	CALL	TA_STOP
+	LD	HL,(TA_NA)
+	CALL	TA_LOAD_HL
+	CALL	TA_START
 	;SD補充: FILL_PER_TICKVバイトだけ満タン/EOFでなければ読む
 	LD	A,(FILL_PER_TICKV)
 	OR	A
@@ -1060,6 +1058,7 @@ IVT_PTR:	DS	2			;$8000 + (IVR_FMTAV) をキャッシュ
 SAVED_VEC_FMTA:	DS	2			;元のベクタエントリ(2バイト)
 TA_TICKS:	DS	1			;ISRが進めるtickカウンタ(8bit、wrap可)
 TA_CTRL_SHADOW:	DS	1			;27Hに書いた制御バイト
+TA_NA:		DS	2			;Timer A プリロード値(ISRが毎tick再ロード)
 WCREDIT:	DS	2			;待ちオーバーシュートの繰越サンプル
 IRQ_ACTIVE:	DS	1			;1=ISR稼働中(RB_GET/GETBの排他切替)
 GETB_TO:	DS	2			;GETB空スピンのタイムアウト計数(PROGRESS用)
