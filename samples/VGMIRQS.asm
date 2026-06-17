@@ -408,6 +408,13 @@ GETB:	PUSH	HL			;HL/DE/BCを保存（呼び出し側がHL等を使う）
 ;IN  DE=サンプル数
 ;-------------------------------------------------
 WAIT_DE:
+;VGMが直前のOPNバーストで27Hを書いて背景タイマを止めている可能性があるので、
+;待ちの先頭で必ず再起動する。これでこの待ちの間にISRが発火しSDを補充できる。
+;(タイマは止まっている=ISR非発火状態なので、ここでの再起動はISRと衝突しない。
+; 念のためDIで囲う。busy-loopの音価=テンポはこの再起動の影響を受けない。)
+	DI
+	CALL	TA_REARM
+	EI
 ;処理時間debt(音源書き込み等)を先に差し引き、密な小節の詰まりを均す
 	PUSH	DE			;元ウェイトを退避
 	LD	HL,(WDEBT)		;DE = ウェイト - WDEBT
@@ -920,6 +927,17 @@ CALC_TA_NA:
 	LD	HL,1
 	RET
 
+;TA_REARM - 背景タイマを停止→NA再ロード→起動して割り込みを再武装する
+;・VGMデータが27Hを書くと背景タイマが止まる(LoadA=0)。これを各WAIT_DEの先頭と
+;  ISR内で呼び、タイマを生かし続ける(VGMIRQと同じ「毎回再起動」方式)。
+; 破壊: AF,BC,DE,HL (呼び出し側で保護すること)
+TA_REARM:
+	CALL	TA_STOP
+	LD	HL,(TA_NA)
+	CALL	TA_LOAD_HL
+	CALL	TA_START
+	RET
+
 ;IRQ_SETUP - ベクタ退避→自前ISR設置→Timer A起動(以後ISRが毎tick再起動)→EI
 IRQ_SETUP:
 	DI
@@ -944,10 +962,8 @@ IRQ_SETUP:
 	LD	(ISR_CNT),HL
   ENDIF
 	CALL	CALC_TA_NA		;HL=NA
-	LD	(TA_NA),HL		;ISRが毎tick再ロードするため保存
-	CALL	TA_STOP
-	CALL	TA_LOAD_HL
-	CALL	TA_START
+	LD	(TA_NA),HL		;ISR/WAIT_DEが再ロードするため保存
+	CALL	TA_REARM		;起動(以後はWAIT_DE先頭とISRが再起動し続ける)
 	LD	A,0FFH			;割り込み稼働フラグON(RB_GET/GETBの排他切替)
 	LD	(IRQ_ACTIVE),A
 	EI
@@ -980,10 +996,7 @@ ISR_FMTA:
 	INC	HL
 	LD	(ISR_CNT),HL
   ENDIF
-	CALL	TA_STOP			;停止+flag消去
-	LD	HL,(TA_NA)
-	CALL	TA_LOAD_HL		;NA再ロード
-	CALL	TA_START		;再起動(次のオーバーフローを再武装)
+	CALL	TA_REARM		;停止→NA再ロード→再起動(次のオーバーフローを再武装)
 	LD	A,(FILL_PER_TICKV)	;SD補充: FILL_PER_TICKVバイトまで
 	OR	A
 	JR	Z,.done
