@@ -108,6 +108,17 @@ DONE:
 	LD	SP,(PLAYSP)		;再生中の脱出点へ
 	CALL	IRQ_TEARDOWN		;Timer A停止・ベクタ復元
 	CALL	STRM_CLOSE
+  IF PROGRESS
+	LD	HL,(ISR_CNT)		;診断: ISRが発火したか(J=発火 K=未発火)+回数の上位
+	LD	A,H
+	OR	L
+	LD	A,4BH			;'K'=ISR未発火(割り込みが来ていない)
+	JR	Z,.kj
+	LD	A,4AH			;'J'=ISR発火あり
+.kj:	RST	18H
+	LD	A,(ISR_CNT+1)		;発火回数の上位バイト(≒回数/256)を10進表示
+	CALL	PRDEC
+  ENDIF
 	LD	HL,MSG_END
 	CALL	PUTS
 	RET				;メニューへ戻る
@@ -928,6 +939,10 @@ IRQ_SETUP:
 	LD	A,IVT_PAGE		;I=80H, IM2
 	LD	I,A
 	IM	2
+  IF PROGRESS
+	LD	HL,0			;ISR発火カウンタ初期化(診断用)
+	LD	(ISR_CNT),HL
+  ENDIF
 	CALL	CALC_TA_NA		;HL=NA
 	LD	(TA_NA),HL		;ISRが毎tick再ロードするため保存
 	CALL	TA_STOP
@@ -960,6 +975,11 @@ IRQ_TEARDOWN:
 ISR_FMTA:
 	EX	AF,AF'
 	EXX
+  IF PROGRESS
+	LD	HL,(ISR_CNT)		;ISR発火回数++(診断: 終了時にDONEで表示)
+	INC	HL
+	LD	(ISR_CNT),HL
+  ENDIF
 	CALL	TA_STOP			;停止+flag消去
 	LD	HL,(TA_NA)
 	CALL	TA_LOAD_HL		;NA再ロード
@@ -1019,6 +1039,7 @@ TA_CTRL_SHADOW:	DS	1			;(未使用。互換のため残置)
 TA_NA:		DS	2			;Timer Aプリロード値(ISRが毎tick再ロード)
 IRQ_ACTIVE:	DS	1			;1=ISR稼働中(RB_GET/GETBの排他切替)
 GETB_TO:	DS	2			;GETB空スピンのタイムアウト計数(PROGRESS用)
+ISR_CNT:	DS	2			;ISR発火回数(診断用。DONEでJ/K表示)
 
 ;ISRが割り込み中に最深のSTRM_READ(セクタ/クラスタ跨ぎでMMC_BRD_CMD/READ_FATが
 ;さらに再帰)をメインのスタック上にネストするため厚めに確保する。
