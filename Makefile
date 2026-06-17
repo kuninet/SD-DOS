@@ -22,7 +22,7 @@ ASM = printf 'OK\n' | $(JAVA) -jar $(TOOLS80) -tgt=z80
 
 ASM_SRCS = $(wildcard src/*.asm)
 
-all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt $(BUILD)/VGMPLAY.cmt $(BUILD)/VGMIRQ.cmt
+all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt $(BUILD)/VGMPLAY.cmt $(BUILD)/VGMIRQ.cmt $(BUILD)/VGMIRQP.cmt
 
 $(BUILD)/MAIN.cmt: $(ASM_SRCS) | $(BUILD)
 	$(ASM) src/MAIN.asm
@@ -73,6 +73,20 @@ $(BUILD)/VGMIRQ.asm.log.asz: samples/VGMIRQ.asm | $(BUILD)
 	mv samples/VGMIRQ.sym $(BUILD)/VGMIRQ.sym
 	rm -f samples/VGMIRQ.raw
 
+$(BUILD)/VGMIRQP.cmt: samples/VGMIRQP.asm | $(BUILD)
+	$(ASM) samples/VGMIRQP.asm
+	mv samples/VGMIRQP.cmt $@
+
+$(BUILD)/VGMIRQP.raw: samples/VGMIRQP.asm | $(BUILD)
+	$(ASM) -raw samples/VGMIRQP.asm
+	mv samples/VGMIRQP.raw $@
+
+$(BUILD)/VGMIRQP.asm.log.asz: samples/VGMIRQP.asm | $(BUILD)
+	$(ASM) -raw -debug -sym samples/VGMIRQP.asm
+	mv samples/VGMIRQP.asm.log.asz $@
+	mv samples/VGMIRQP.sym $(BUILD)/VGMIRQP.sym
+	rm -f samples/VGMIRQP.raw
+
 # -debugでアセンブルリスト(.log.asz)とシンボル(.sym)、-rawでベタイメージも生成する
 $(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
 	$(ASM) -raw -debug -sym src/MAIN.asm
@@ -87,7 +101,7 @@ $(BUILD)/VGMPLAY.asm.log.asz: samples/VGMPLAY.asm | $(BUILD)
 	mv samples/VGMPLAY.sym $(BUILD)/VGMPLAY.sym
 	rm -f samples/VGMPLAY.raw
 
-list: $(BUILD)/MAIN.raw $(BUILD)/VGMPLAY.asm.log.asz $(BUILD)/VGMIRQ.asm.log.asz
+list: $(BUILD)/MAIN.raw $(BUILD)/VGMPLAY.asm.log.asz $(BUILD)/VGMIRQ.asm.log.asz $(BUILD)/VGMIRQP.asm.log.asz
 
 test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw $(BUILD)/VGMPLAY.raw
 	$(PYTHON) scripts/test_emu_io.py
