@@ -80,7 +80,10 @@ TPSV_HI:	DB	1		;9006H POKE: TICKS_PER_SAMPLE_X256 の高位(=1で +256)
 FILL_PER_TICKV:	DB	FILL_PER_TICK	;9007H POKE: 1tickあたりのSD補充バイト数
 
 START:
-	DI				;ベクタ非武装の間は割り込みを止める
+	;ここでは DI しない。IRQ_SETUP まではISR(生産者)が存在せずリングバッファの
+	;競合は起きないため、割り込みは IRQ_ACTIVE ゲートだけで十分。START で DI すると
+	;N-BASIC の KEYWAIT 等が割り込み依存の場合にメニューがハングする(実績のある
+	;VGMPLAY/VGMIRQ も START では DI していない)。
 	LD	(SAVSP),SP		;BASIC復帰用のSP保存
 	LD	SP,STACK_TOP		;専用スタックへ
 	XOR	A
@@ -998,7 +1001,10 @@ TA_CTRL_SHADOW:	DS	1			;27Hに書いた制御バイト
 WCREDIT:	DS	2			;待ちオーバーシュートの繰越サンプル
 IRQ_ACTIVE:	DS	1			;1=ISR稼働中(RB_GET/GETBの排他切替)
 
-STACK:		DS	256			;プレイヤー専用スタック
+;ISRが割り込み中にコード中最も深い STRM_READ(セクタ/クラスタ跨ぎで MMC_BRD_CMD/
+;READ_FAT がさらに再帰)をメインのスタック上にネストするため、VGMPLAY(256)より
+;厚く確保する。STACK_TOP は VGMPLAY 実績の E12EH より下に収まる。
+STACK:		DS	512			;プレイヤー専用スタック(ISRネスト分を上乗せ)
 STACK_TOP	EQU	$			;スタック先頭(SPの初期値)
 
 	END
