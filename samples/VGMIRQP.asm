@@ -35,8 +35,14 @@ TA_REG_LO	EQU	25H
 TA_REG_CTRL	EQU	27H
 ;27Hビット配置(VGMIRQと同じ前提): bit0=LoadA, bit1=LoadB, bit2=IRQEN A,
 ;                                  bit3=IRQEN B, bit4=ResetA, bit5=ResetB
-TA_CTRL_RUN_POLL	EQU	00000001B	;LoadA=1, IRQEN A=0(割込なし)
-TA_CTRL_RUN_RESET_A	EQU	00010001B	;LoadA=1, ResetA=1(flagパルスリセット)
+;
+;TATEST3 で判明: 実機YM2203は IRQEN A(bit2)=1 を立てないと Timer A が
+;動作しない(=overflow flag も立たない)。データシートでは曖昧だが、
+;ここでは必須。polling版でも IRQEN A=1 にする必要がある。
+;ただしその結果 /IRQ ラインがアサートされるため、CPU 側で DI して
+;割込み受付を全閉する。N-BASIC IM2 vector ($8004等)に飛ぶのを防ぐ。
+TA_CTRL_RUN_POLL	EQU	00000101B	;LoadA=1, IRQEN A=1
+TA_CTRL_RUN_RESET_A	EQU	00010101B	;LoadA=1, IRQEN A=1, ResetA=1
 TA_CTRL_STOP_RESET	EQU	00010000B	;ResetA=1のみ(停止+flagクリア)
 TA_STAT_FLAG_A_MASK	EQU	00000001B	;ステータス読みのbit0
 
@@ -61,6 +67,9 @@ DBG_RSV1:	DB	0		;9004H 予約
 DBG_RSV2:	DB	0		;9005H 予約
 
 START:
+	DI				;polling中は割込み完全禁止(YM2203 /IRQ
+					; がIRQEN A=1で立っても N-BASIC IM2
+					; vector へ飛ばないように)
 	LD	(SAVSP),SP
 	LD	SP,STACK_TOP
 
@@ -626,6 +635,7 @@ PLAY_FILE:
 	CALL	PARSE_HDR
 	CALL	RB_PREFILL
 	;念のため Timer A を停止状態にしておく(N-BASIC 起動直後の状態保証)
+	DI				;STRM_*でEIされている可能性に備え再DI
 	CALL	TA_STOP_POLL
 	JP	PLAY
 .nf:	LD	HL,MSG_NF
