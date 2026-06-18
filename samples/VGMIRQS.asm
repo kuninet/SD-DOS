@@ -38,8 +38,11 @@ KEYWAIT	EQU	0F75H		;1文字入力待ち A<-コード
 STRM_DIRLIST	EQU	600EH		;ディレクトリ列挙(全ファイル名を一括取得)
 MAXFILES	EQU	40H		;一覧の最大ファイル数(64)
 BUSY_MAX	EQU	00H		;YM2203 BUSY待ち上限(0=無制限)。POKE &H900A
-RBUF_SIZE	EQU	4500H		;先読みリングバッファ(約17.25KB)
-INITFILL	EQU	2000H		;起動時の部分プリフィル(8KB。残りはISRが補充)
+;先読みリングバッファは N-BASIC 高位ワーク(EDCE で衝突)の手前まで極限まで大きく取る。
+;バッファ末尾の後ろに置く作業変数+スタック(約1.5KB)を足した最上位が EDCE を超えない
+;ようにする。下の RBUF_SIZE で STACK_TOP ≒ EB00 台(EDCE まで約0.7KB余裕)。
+RBUF_SIZE	EQU	5000H		;先読みリングバッファ(20KB)。密なところの貯金を最大化
+INITFILL	EQU	3000H		;起動時の部分プリフィル(12KB)。出だしの貯金も厚めに
 
 ;--- YM2203 Timer A(背景SD補充のトリガにのみ使用)---
 TA_REG_HI	EQU	24H
@@ -52,6 +55,7 @@ IVT_PAGE	EQU	80H		;Iレジスタ値(=IM2テーブルページ)
 IVR_FMTA_DEFAULT	EQU	04H	;INT4..7のうちFM Timer A用vector(実機で要確認)
 SAMPLES_PER_TICK	EQU	80	;Timer A周期(サンプル)≒補充間隔。精度はテンポ無関係
 FILL_PER_TICK	EQU	01H		;1tickあたりのSD補充バイト数
+FILL_MINSAMP	EQU	40H		;この値(サンプル)未満の短い待ちではSDを読まない(音符飛び防止)
 
 ;--- 進行状況表示(実機デバッグ用。RST 18Hで1文字)---
 PROGRESS	EQU	1
@@ -75,6 +79,8 @@ BUSY_MAXV:	DB	BUSY_MAX		;900AH BUSY待ち上限(0=無制限)
 READ_SAMPV:	DB	30H		;900BH SD読み1バイトの所要(サンプル換算)。ISRの
 					;     SD補充時間をwaitから精算してテンポを保つ。大=速くなる
 					;     (sim既定0x30でVGMPLAY同等。実機はBUSY待ち分もう少し上げる)
+FILL_MINSAMPV:	DB	FILL_MINSAMP	;900CH この値未満の短い待ちではSDを読まない。
+					;     音符が飛ぶなら上げる(短い待ちでの読みを抑える)
 
 START:
 	DI				;ベクタ差し替え前。IRQ_SETUPでEIする
@@ -367,33 +373,15 @@ SKIP:	LD	A,D			;
 GETB:	PUSH	HL			;HL/DE/BCを保存（呼び出し側がHL等を使う）
 	PUSH	DE			;
 	PUSH	BC			;
-  IF PROGRESS
-	LD	HL,0			;空スピンのタイムアウト計数
-	LD	(GETB_TO),HL		;
-  ENDIF
-.try:	CALL	RB_GET_SAFE		;リングバッファから取得(IRQ中はDI/EI排他)
+	CALL	RB_GET_SAFE		;リングバッファから取得
 	JR	NC,.GOT			;取得できた
 	LD	A,(RB_EOF)		;バッファ空。先読みが終端に達していれば
 	OR	A			;
 	JR	NZ,.EOF			;再生終了へ
-	LD	A,(IRQ_ACTIVE)		;IRQ稼働中?
-	OR	A			;
-	JR	Z,.fallback		;非稼働中: 直接読み(STRM_READ再入の心配なし)
-  IF PROGRESS
-	LD	HL,(GETB_TO)		;稼働中の空: ISR補充待ち。タイムアウトで打ち切る
-	INC	HL			;
-	LD	(GETB_TO),HL		;
-	LD	A,H			;
-	OR	L			;
-	JR	NZ,.try			;65536回(約6ms)まではISR補充を待つ
-	LD	A,CH_U			;'U'=バッファ枯渇(ISRが補充できていない=Timer A未発火の疑い)
-	RST	18H			;
-	JR	.EOF			;ハードハングせずメニューへ
-  ELSE
-	JR	.try			;稼働中: ISR補充を待って再取得
-  ENDIF
-.fallback:
-	CALL	STRM_READ		;非稼働中の直接読み(プリフィル前のPARSE_HDR等)
+	;バッファ空(密なところでISRの補充が間に合わなかった)→同期で直接読む。
+	;GETBはタイマOFF(待ち以外)のときだけ呼ばれるのでISRと衝突しない=再入安全。
+	;VGMPLAYと同じく、密なところは引っかかりつつも止まらず読み切る。
+	CALL	STRM_READ		;
 	JR	C,.RDEOF		;
 .GOT:	POP	BC			;
 	POP	DE			;
@@ -411,15 +399,12 @@ GETB:	PUSH	HL			;HL/DE/BCを保存（呼び出し側がHL等を使う）
 ;IN  DE=サンプル数
 ;-------------------------------------------------
 WAIT_DE:
-;VGMが直前のOPNバーストで27Hを書いて背景タイマを止めている可能性があるので、
-;待ちの先頭で必ず再起動する。これでこの待ちの間にISRが発火しSDを補充できる。
-;(タイマは止まっている=ISR非発火状態なので、ここでの再起動はISRと衝突しない。
-; 念のためDIで囲う。busy-loopの音価=テンポはこの再起動の影響を受けない。)
+;SDの読みは「長い待ちの間だけ」ISRにやらせる。短い待ち/OPNバースト中に444μsのSD読みが
+;入ると、その間OPN書込みが止まって音符が飛ぶため(VGMPLAYと同じ戦略)。長い待ちのとき
+;だけTimer Aを起動し、待ちの終わりで停止する。短い待ちの間はタイマOFF=ISR非発火で
+;まったく邪魔をしない。busy-loopの音価(テンポ)は不変。
+	;ISRが長い待ち中に貯めたSD精算(SD_DEBT)をWDEBTへ移す(DIで保護)
 	DI
-	CALL	TA_REARM
-	;ISRがSD補充に費やした時間(SD_DEBT)をWDEBTへ移して精算する。これでSDの
-	;読み時間がwaitから差し引かれ、テンポがVGMPLAY同等になる(VGMPLAYのREAD_SAMP相当)。
-	;ISRはSD_DEBTにのみ加算するので、ここのDI区間で安全に移して0クリアできる。
 	PUSH	DE			;入力サンプル数を保護
 	LD	HL,(SD_DEBT)
 	LD	DE,(WDEBT)
@@ -429,36 +414,55 @@ WAIT_DE:
 	LD	(SD_DEBT),HL
 	POP	DE
 	EI
-;処理時間debt(音源書き込み等)を先に差し引き、密な小節の詰まりを均す
+	;処理時間debt(音源書込み+SD精算)を先に差し引く
 	PUSH	DE			;元ウェイトを退避
 	LD	HL,(WDEBT)		;DE = ウェイト - WDEBT
-	LD	A,E			;
-	SUB	L			;
-	LD	E,A			;
-	LD	A,D			;
-	SBC	A,H			;
-	LD	D,A			;
+	LD	A,E
+	SUB	L
+	LD	E,A
+	LD	A,D
+	SBC	A,H
+	LD	D,A
 	JR	C,.DEBTOVER		;WDEBT>ウェイト:全部debtで消化
 	POP	HL			;退避ウェイト破棄(DE=残りウェイト)
 	LD	HL,0			;debt完済
-	LD	(WDEBT),HL		;
-	JR	.BURN			;残りを空ループで消化
-.DEBTOVER:	LD	HL,(WDEBT)		;新WDEBT = WDEBT - 元ウェイト
+	LD	(WDEBT),HL
+	;この待ちが長い(>=FILL_MINSAMP)ならTimer A起動、短ければ起動しない
+	XOR	A
+	LD	(SD_ARMED),A		;既定:起動せず
+	LD	A,D			;DE>=256 は無条件で長い
+	OR	A
+	JR	NZ,.arm
+	LD	A,(FILL_MINSAMPV)	;FILL_MINSAMP >= E なら短い→起動せず
+	CP	E
+	JR	NC,.BURN
+.arm:	DI				;長い: この待ちの間だけISRがSDを読む
+	CALL	TA_REARM
+	EI
+	LD	A,1
+	LD	(SD_ARMED),A
+.BURN:	LD	A,D			;残ウェイト=0なら終了処理
+	OR	E
+	JR	NZ,.cont
+	LD	A,(SD_ARMED)		;起動していたらTimer A停止(次のバーストでISR発火させない)
+	OR	A
+	RET	Z
+	DI
+	CALL	TA_STOP
+	EI
+	RET
+.cont:	LD	A,(WAIT_KV)		;空ループでウェイトを消化
+	LD	B,A
+.W:	DJNZ	.W
+	DEC	DE
+	JR	.BURN
+.DEBTOVER:
+	LD	HL,(WDEBT)		;新WDEBT = WDEBT - 元ウェイト
 	POP	DE			;DE=元ウェイト
 	OR	A			;CY=0
-	SBC	HL,DE			;
-	LD	(WDEBT),HL		;
-	RET				;ウェイトはdebtで完済
-;残りDEサンプルを空ループ(WAIT_KV)で消化する。SD先読みはここでは行わない
-;(背景のTimer A ISRが補充するため)。VGMPLAYの音価(テンポ)はそのまま。
-.BURN:	LD	A,D			;残ウェイト=0なら終了
-	OR	E			;
-	RET	Z			;
-	LD	A,(WAIT_KV)		;空ループでウェイトを消化
-	LD	B,A			;
-.W:	DJNZ	.W			;
-	DEC	DE			;
-	JR	.BURN			;
+	SBC	HL,DE
+	LD	(WDEBT),HL
+	RET				;ウェイトはdebtで完済(短すぎ→SDも読まない)
 
 
 ;-------------------------------------------------
@@ -977,9 +981,9 @@ IRQ_SETUP:
 	LD	(ISR_CNT),HL
   ENDIF
 	CALL	CALC_TA_NA		;HL=NA
-	LD	(TA_NA),HL		;ISR/WAIT_DEが再ロードするため保存
-	CALL	TA_REARM		;起動(以後はWAIT_DE先頭とISRが再起動し続ける)
-	LD	A,0FFH			;割り込み稼働フラグON(RB_GET/GETBの排他切替)
+	LD	(TA_NA),HL		;WAIT_DE/ISRが再ロードするため保存
+	CALL	TA_STOP			;初期は停止(タイマは長い待ちのときだけWAIT_DEが起動)
+	LD	A,0FFH			;割り込み稼働フラグON
 	LD	(IRQ_ACTIVE),A
 	EI
 	RET
@@ -1076,8 +1080,9 @@ SAVED_VEC_FMTA:	DS	2			;元のベクタエントリ
 TA_CTRL_SHADOW:	DS	1			;(未使用。互換のため残置)
 TA_NA:		DS	2			;Timer Aプリロード値(ISRが毎tick再ロード)
 IRQ_ACTIVE:	DS	1			;1=ISR稼働中(RB_GET/GETBの排他切替)
-GETB_TO:	DS	2			;GETB空スピンのタイムアウト計数(PROGRESS用)
+GETB_TO:	DS	2			;(未使用。互換のため残置)
 ISR_CNT:	DS	2			;ISR発火回数(診断用。DONEでJ/K表示)
+SD_ARMED:	DS	1			;1=この待ちでTimer A起動中(終了時に停止する目印)
 
 ;ISRが割り込み中に最深のSTRM_READ(セクタ/クラスタ跨ぎでMMC_BRD_CMD/READ_FATが
 ;さらに再帰)をメインのスタック上にネストするため厚めに確保する。
