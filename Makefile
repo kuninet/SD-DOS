@@ -92,6 +92,7 @@ test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw $(BUILD)/VGMPLAY.raw $(BUILD)/SDRECV.
 	$(PYTHON) scripts/test_sample.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/SDUMP.raw
 	$(PYTHON) scripts/test_vgmplay.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/VGMPLAY.raw
 	$(PYTHON) scripts/test_sdrecv.py $(BUILD)/SDRECV.raw $(BUILD)/SDRECV.sym
+	$(PYTHON) scripts/test_sdrecv_ymodem.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/SDRECV.raw $(BUILD)/SDRECV.sym
 
 # EPROM書き込み用ROMイメージの一括生成
 ROMDIR       = $(BUILD)/rom
