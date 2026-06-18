@@ -72,6 +72,9 @@ TPSV_LO:	DB	33		;9007H NA校正 下位(=33で289)
 TPSV_HI:	DB	1		;9008H NA校正 上位(=1で+256)
 FILL_PER_TICKV:	DB	FILL_PER_TICK	;9009H 1tickあたり補充バイト数
 BUSY_MAXV:	DB	BUSY_MAX		;900AH BUSY待ち上限(0=無制限)
+READ_SAMPV:	DB	30H		;900BH SD読み1バイトの所要(サンプル換算)。ISRの
+					;     SD補充時間をwaitから精算してテンポを保つ。大=速くなる
+					;     (sim既定0x30でVGMPLAY同等。実機はBUSY待ち分もう少し上げる)
 
 START:
 	DI				;ベクタ差し替え前。IRQ_SETUPでEIする
@@ -414,6 +417,17 @@ WAIT_DE:
 ; 念のためDIで囲う。busy-loopの音価=テンポはこの再起動の影響を受けない。)
 	DI
 	CALL	TA_REARM
+	;ISRがSD補充に費やした時間(SD_DEBT)をWDEBTへ移して精算する。これでSDの
+	;読み時間がwaitから差し引かれ、テンポがVGMPLAY同等になる(VGMPLAYのREAD_SAMP相当)。
+	;ISRはSD_DEBTにのみ加算するので、ここのDI区間で安全に移して0クリアできる。
+	PUSH	DE			;入力サンプル数を保護
+	LD	HL,(SD_DEBT)
+	LD	DE,(WDEBT)
+	ADD	HL,DE
+	LD	(WDEBT),HL
+	LD	HL,0
+	LD	(SD_DEBT),HL
+	POP	DE
 	EI
 ;処理時間debt(音源書き込み等)を先に差し引き、密な小節の詰まりを均す
 	PUSH	DE			;元ウェイトを退避
@@ -474,6 +488,7 @@ RB_INIT:
 	LD	HL,0			;
 	LD	(RB_CNT),HL		;バイト数=0
 	LD	(WDEBT),HL		;処理時間debt=0
+	LD	(SD_DEBT),HL		;SD精算debt=0
 	XOR	A			;
 	LD	(RB_EOF),A		;終端フラグ=0
 	RET				;
@@ -1003,6 +1018,15 @@ ISR_FMTA:
 	LD	B,A
 .fl:	CALL	RB_TRYFILL1		;満タン/EOFでなければ1バイト補充
 	JR	NC,.done
+	;読んだ1バイト分の所要(READ_SAMP)をSD_DEBTへ積む(WAIT_DEがWDEBTへ移して精算)
+	PUSH	BC			;ループ counter 退避
+	LD	HL,(SD_DEBT)
+	LD	A,(READ_SAMPV)
+	LD	C,A
+	LD	B,0
+	ADD	HL,BC
+	LD	(SD_DEBT),HL
+	POP	BC
 	DJNZ	.fl
 .done:	EXX
 	EX	AF,AF'
@@ -1034,7 +1058,8 @@ RB_RDP:		DS	2		;読み出しポインタ
 RB_WRP:		DS	2		;書き込みポインタ
 RB_CNT:		DS	2		;バッファ内バイト数（0～RBUF_SIZE）
 RB_EOF:		DS	1		;先読みが終端に達したら非0
-WDEBT:		DS	2		;処理時間debt(サンプル)
+WDEBT:		DS	2		;処理時間debt(サンプル)。主+ISRのSD精算ぶん
+SD_DEBT:	DS	2		;ISRがSD補充に費やしたサンプル(WAIT_DEがWDEBTへ移す)
 PLAYSP:		DS	02H			;再生中の脱出点SP
 LISTCNT:	DS	01H			;一覧の件数
 VGMCNT:		DS	01H			;VGM計数(選択用)
