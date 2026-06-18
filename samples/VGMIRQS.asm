@@ -403,18 +403,8 @@ WAIT_DE:
 ;入ると、その間OPN書込みが止まって音符が飛ぶため(VGMPLAYと同じ戦略)。長い待ちのとき
 ;だけTimer Aを起動し、待ちの終わりで停止する。短い待ちの間はタイマOFF=ISR非発火で
 ;まったく邪魔をしない。busy-loopの音価(テンポ)は不変。
-	;ISRが長い待ち中に貯めたSD精算(SD_DEBT)をWDEBTへ移す(DIで保護)
-	DI
-	PUSH	DE			;入力サンプル数を保護
-	LD	HL,(SD_DEBT)
-	LD	DE,(WDEBT)
-	ADD	HL,DE
-	LD	(WDEBT),HL
-	LD	HL,0
-	LD	(SD_DEBT),HL
-	POP	DE
-	EI
-	;処理時間debt(音源書込み+SD精算)を先に差し引く
+	;OPN書込みコスト(WDEBT)を先に差し引く。SD精算はbusy-loop内で局所的に行う
+	;(ラグ無し)。SD_DEBTを次の待ちへ転送する旧方式は短い音符を潰すので廃止。
 	PUSH	DE			;元ウェイトを退避
 	LD	HL,(WDEBT)		;DE = ウェイト - WDEBT
 	LD	A,E
@@ -427,6 +417,9 @@ WAIT_DE:
 	POP	HL			;退避ウェイト破棄(DE=残りウェイト)
 	LD	HL,0			;debt完済
 	LD	(WDEBT),HL
+	;このウェイトのSD精算を新規スタート(前の待ちの未精算は捨てる=短い音符を潰さない)
+	LD	A,(ISR_READS)
+	LD	(LAST_READS),A
 	;この待ちが長い(>=FILL_MINSAMP)ならTimer A起動、短ければ起動しない
 	XOR	A
 	LD	(SD_ARMED),A		;既定:起動せず
@@ -443,26 +436,45 @@ WAIT_DE:
 	LD	(SD_ARMED),A
 .BURN:	LD	A,D			;残ウェイト=0なら終了処理
 	OR	E
-	JR	NZ,.cont
-	LD	A,(SD_ARMED)		;起動していたらTimer A停止(次のバーストでISR発火させない)
+	JR	Z,.fin
+	;ISRが読んだぶんを「今の待ち」から差し引く(ラグなし局所精算)。ISR_READSは
+	;ISRが1バイト読むごとに++。差分を1件ずつ消費し、その読みの所要(READ_SAMP)
+	;サンプルをbusy-loopせず即スキップ(その時間はISR側で既に過ぎている)。
+	LD	A,(ISR_READS)
+	LD	HL,LAST_READS
+	CP	(HL)
+	JR	Z,.cont			;新規読みなし→通常burn
+	INC	(HL)			;1件消費 LAST_READS++
+	LD	A,(READ_SAMPV)		;DE -= READ_SAMP (0でクランプ)
+	LD	C,A
+	LD	A,E
+	SUB	C
+	LD	E,A
+	LD	A,D
+	SBC	A,0
+	LD	D,A
+	JR	NC,.BURN		;>=0 → 先頭へ(未消費の読みがまだあるかも)
+	LD	DE,0			;0未満→クランプ
+	JR	.BURN
+.cont:	LD	A,(WAIT_KV)		;空ループで1サンプル消化(実時間が過ぎる)
+	LD	B,A
+.W:	DJNZ	.W
+	DEC	DE
+	JR	.BURN
+.fin:	LD	A,(SD_ARMED)		;起動していたらTimer A停止(次のバーストでISR発火させない)
 	OR	A
 	RET	Z
 	DI
 	CALL	TA_STOP
 	EI
 	RET
-.cont:	LD	A,(WAIT_KV)		;空ループでウェイトを消化
-	LD	B,A
-.W:	DJNZ	.W
-	DEC	DE
-	JR	.BURN
 .DEBTOVER:
 	LD	HL,(WDEBT)		;新WDEBT = WDEBT - 元ウェイト
 	POP	DE			;DE=元ウェイト
 	OR	A			;CY=0
 	SBC	HL,DE
 	LD	(WDEBT),HL
-	RET				;ウェイトはdebtで完済(短すぎ→SDも読まない)
+	RET				;ウェイトはdebtで完済
 
 
 ;-------------------------------------------------
@@ -492,9 +504,10 @@ RB_INIT:
 	LD	HL,0			;
 	LD	(RB_CNT),HL		;バイト数=0
 	LD	(WDEBT),HL		;処理時間debt=0
-	LD	(SD_DEBT),HL		;SD精算debt=0
 	XOR	A			;
 	LD	(RB_EOF),A		;終端フラグ=0
+	LD	(ISR_READS),A		;SD読み件数カウンタ=0
+	LD	(LAST_READS),A		;消費済み件数=0
 	RET				;
 
 ;[RB]1バイト格納（満タンでないこと） IN A=値
@@ -1022,15 +1035,8 @@ ISR_FMTA:
 	LD	B,A
 .fl:	CALL	RB_TRYFILL1		;満タン/EOFでなければ1バイト補充
 	JR	NC,.done
-	;読んだ1バイト分の所要(READ_SAMP)をSD_DEBTへ積む(WAIT_DEがWDEBTへ移して精算)
-	PUSH	BC			;ループ counter 退避
-	LD	HL,(SD_DEBT)
-	LD	A,(READ_SAMPV)
-	LD	C,A
-	LD	B,0
-	ADD	HL,BC
-	LD	(SD_DEBT),HL
-	POP	BC
+	LD	HL,ISR_READS		;読んだ件数++(WAIT_DEのbusy-loopが今の待ちから局所精算)
+	INC	(HL)
 	DJNZ	.fl
 .done:	EXX
 	EX	AF,AF'
@@ -1062,8 +1068,7 @@ RB_RDP:		DS	2		;読み出しポインタ
 RB_WRP:		DS	2		;書き込みポインタ
 RB_CNT:		DS	2		;バッファ内バイト数（0～RBUF_SIZE）
 RB_EOF:		DS	1		;先読みが終端に達したら非0
-WDEBT:		DS	2		;処理時間debt(サンプル)。主+ISRのSD精算ぶん
-SD_DEBT:	DS	2		;ISRがSD補充に費やしたサンプル(WAIT_DEがWDEBTへ移す)
+WDEBT:		DS	2		;処理時間debt(サンプル)。OPN書込みコスト(ADD_DEBT)
 PLAYSP:		DS	02H			;再生中の脱出点SP
 LISTCNT:	DS	01H			;一覧の件数
 VGMCNT:		DS	01H			;VGM計数(選択用)
@@ -1083,6 +1088,8 @@ IRQ_ACTIVE:	DS	1			;1=ISR稼働中(RB_GET/GETBの排他切替)
 GETB_TO:	DS	2			;(未使用。互換のため残置)
 ISR_CNT:	DS	2			;ISR発火回数(診断用。DONEでJ/K表示)
 SD_ARMED:	DS	1			;1=この待ちでTimer A起動中(終了時に停止する目印)
+ISR_READS:	DS	1			;ISRがSDを読んだ件数(ISRが++、8bit周回)
+LAST_READS:	DS	1			;WAIT_DEが消費済みの件数(局所SD精算用)
 
 ;ISRが割り込み中に最深のSTRM_READ(セクタ/クラスタ跨ぎでMMC_BRD_CMD/READ_FATが
 ;さらに再帰)をメインのスタック上にネストするため厚めに確保する。
