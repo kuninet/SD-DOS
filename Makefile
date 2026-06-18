@@ -87,6 +87,10 @@ $(BUILD)/VGMIRQF.asm.log.asz: samples/VGMIRQF.asm | $(BUILD)
 	mv samples/VGMIRQF.sym $(BUILD)/VGMIRQF.sym
 	rm -f samples/VGMIRQF.raw
 
+$(BUILD)/INTTEST.cmt: samples/INTTEST.asm | $(BUILD)
+	$(ASM) samples/INTTEST.asm
+	mv samples/INTTEST.cmt $@
+
 $(BUILD)/VGMIRQS.cmt: samples/VGMIRQS.asm | $(BUILD)
 	$(ASM) samples/VGMIRQS.asm
 	mv samples/VGMIRQS.cmt $@
