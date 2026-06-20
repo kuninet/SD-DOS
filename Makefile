@@ -23,7 +23,7 @@ ASM = printf 'OK\n' | $(JAVA) -jar $(TOOLS80) -tgt=z80
 
 ASM_SRCS = $(wildcard src/*.asm)
 
-all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt $(BUILD)/VGMPLAY.cmt $(BUILD)/VGMIRQS.cmt
+all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt $(BUILD)/VGMPLAY.cmt $(BUILD)/SDRECV.cmt $(BUILD)/VGMIRQS.cmt
 
 $(BUILD)/MAIN.cmt: $(ASM_SRCS) | $(BUILD)
 	$(ASM) src/MAIN.asm
@@ -59,6 +59,16 @@ $(BUILD)/VGMPLAY.cmt: samples/VGMPLAY.asm | $(BUILD)
 $(BUILD)/VGMPLAY.raw: samples/VGMPLAY.asm | $(BUILD)
 	$(ASM) -raw samples/VGMPLAY.asm
 	mv samples/VGMPLAY.raw $@
+
+$(BUILD)/SDRECV.cmt: samples/SDRECV.asm | $(BUILD)
+	$(ASM) samples/SDRECV.asm
+	mv samples/SDRECV.cmt $@
+
+$(BUILD)/SDRECV.raw: samples/SDRECV.asm | $(BUILD)
+	$(ASM) -raw -debug -sym samples/SDRECV.asm
+	mv samples/SDRECV.raw $@
+	mv samples/SDRECV.sym $(BUILD)/SDRECV.sym
+	rm -f samples/SDRECV.asm.log.asz
 
 $(BUILD)/VGMIRQS.cmt: samples/VGMIRQS.asm | $(BUILD)
 	$(ASM) samples/VGMIRQS.asm
@@ -159,12 +169,13 @@ $(BUILD)/VGMPLAY.asm.log.asz: samples/VGMPLAY.asm | $(BUILD)
 
 list: $(BUILD)/MAIN.raw $(BUILD)/VGMPLAY.asm.log.asz $(BUILD)/VGMIRQS.asm.log.asz
 
-test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw $(BUILD)/VGMPLAY.raw
+test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw $(BUILD)/VGMPLAY.raw $(BUILD)/SDRECV.raw
 	$(PYTHON) scripts/test_emu_io.py
 	$(PYTHON) scripts/test_multicluster.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym
 	$(PYTHON) scripts/test_stream_api.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym
 	$(PYTHON) scripts/test_sample.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/SDUMP.raw
 	$(PYTHON) scripts/test_vgmplay.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/VGMPLAY.raw
+	$(PYTHON) scripts/test_sdrecv.py $(BUILD)/SDRECV.raw $(BUILD)/SDRECV.sym
 
 # VGMプレイヤ cycle-accurate シミュレータ(Issue #68 / VGMIRQ F-1 机上検証)
 # VGMPLAY.sym が必要なため list(=-debug アセンブル)に依存する
