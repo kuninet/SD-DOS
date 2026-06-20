@@ -5,7 +5,8 @@
 #   - tools/tools80.jar (入手方法は tools/README.md を参照)
 #
 # 主なターゲット:
-#   make          MAIN.cmt, IPL.cmt, 64KRAM.hex を build/ に生成する
+#   make          MAIN/IPL/64KRAM + サンプル(SDUMP, VGMPLAY, VGMIRQS)を build/ に生成する
+#   make experiments  参考: samples/experiments/ の実験・診断プログラムを build/ に生成する
 #   make test     回帰テスト(複数クラスタ読みとストリーム読み出しAPI)を実行する
 #   make list     アセンブルリストとシンボルファイルを build/ に生成する
 #   make verify-orig  オリジナル成果物とのバイト一致確認(複数クラスタ読み修正前のコード専用)
@@ -22,7 +23,7 @@ ASM = printf 'OK\n' | $(JAVA) -jar $(TOOLS80) -tgt=z80
 
 ASM_SRCS = $(wildcard src/*.asm)
 
-all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt $(BUILD)/VGMPLAY.cmt $(BUILD)/VGMIRQ.cmt $(BUILD)/VGMIRQP.cmt $(BUILD)/VGMIRQF.cmt $(BUILD)/VGMIRQS.cmt
+all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt $(BUILD)/VGMPLAY.cmt $(BUILD)/VGMIRQS.cmt
 
 $(BUILD)/MAIN.cmt: $(ASM_SRCS) | $(BUILD)
 	$(ASM) src/MAIN.asm
@@ -59,38 +60,6 @@ $(BUILD)/VGMPLAY.raw: samples/VGMPLAY.asm | $(BUILD)
 	$(ASM) -raw samples/VGMPLAY.asm
 	mv samples/VGMPLAY.raw $@
 
-$(BUILD)/VGMIRQ.cmt: samples/VGMIRQ.asm | $(BUILD)
-	$(ASM) samples/VGMIRQ.asm
-	mv samples/VGMIRQ.cmt $@
-
-$(BUILD)/VGMIRQ.raw: samples/VGMIRQ.asm | $(BUILD)
-	$(ASM) -raw samples/VGMIRQ.asm
-	mv samples/VGMIRQ.raw $@
-
-$(BUILD)/VGMIRQ.asm.log.asz: samples/VGMIRQ.asm | $(BUILD)
-	$(ASM) -raw -debug -sym samples/VGMIRQ.asm
-	mv samples/VGMIRQ.asm.log.asz $@
-	mv samples/VGMIRQ.sym $(BUILD)/VGMIRQ.sym
-	rm -f samples/VGMIRQ.raw
-
-$(BUILD)/VGMIRQF.cmt: samples/VGMIRQF.asm | $(BUILD)
-	$(ASM) samples/VGMIRQF.asm
-	mv samples/VGMIRQF.cmt $@
-
-$(BUILD)/VGMIRQF.raw: samples/VGMIRQF.asm | $(BUILD)
-	$(ASM) -raw samples/VGMIRQF.asm
-	mv samples/VGMIRQF.raw $@
-
-$(BUILD)/VGMIRQF.asm.log.asz: samples/VGMIRQF.asm | $(BUILD)
-	$(ASM) -raw -debug -sym samples/VGMIRQF.asm
-	mv samples/VGMIRQF.asm.log.asz $@
-	mv samples/VGMIRQF.sym $(BUILD)/VGMIRQF.sym
-	rm -f samples/VGMIRQF.raw
-
-$(BUILD)/INTTEST.cmt: samples/INTTEST.asm | $(BUILD)
-	$(ASM) samples/INTTEST.asm
-	mv samples/INTTEST.cmt $@
-
 $(BUILD)/VGMIRQS.cmt: samples/VGMIRQS.asm | $(BUILD)
 	$(ASM) samples/VGMIRQS.asm
 	mv samples/VGMIRQS.cmt $@
@@ -105,43 +74,74 @@ $(BUILD)/VGMIRQS.asm.log.asz: samples/VGMIRQS.asm | $(BUILD)
 	mv samples/VGMIRQS.sym $(BUILD)/VGMIRQS.sym
 	rm -f samples/VGMIRQS.raw
 
-$(BUILD)/VGMIRQP.cmt: samples/VGMIRQP.asm | $(BUILD)
-	$(ASM) samples/VGMIRQP.asm
-	mv samples/VGMIRQP.cmt $@
+# ===== 参考: 実験・診断プログラム(samples/experiments/。詳細はそこの README) =====
+EXP = samples/experiments
 
-$(BUILD)/VGMIRQP.raw: samples/VGMIRQP.asm | $(BUILD)
-	$(ASM) -raw samples/VGMIRQP.asm
-	mv samples/VGMIRQP.raw $@
+experiments: $(BUILD)/VGMIRQ.cmt $(BUILD)/VGMIRQP.cmt $(BUILD)/VGMIRQM.cmt \
+             $(BUILD)/VGMIRQF.cmt $(BUILD)/INTTEST.cmt $(BUILD)/OPNCHK.cmt \
+             $(BUILD)/POLL10.cmt $(BUILD)/TIMRSEE.cmt $(BUILD)/TATEST.cmt \
+             $(BUILD)/TATEST3.cmt
 
-$(BUILD)/VGMIRQP.asm.log.asz: samples/VGMIRQP.asm | $(BUILD)
-	$(ASM) -raw -debug -sym samples/VGMIRQP.asm
-	mv samples/VGMIRQP.asm.log.asz $@
-	mv samples/VGMIRQP.sym $(BUILD)/VGMIRQP.sym
-	rm -f samples/VGMIRQP.raw
+# VGMIRQ / VGMIRQF は vgmsim の机上検証でも使うので raw / sym も生成する
+$(BUILD)/VGMIRQ.cmt: $(EXP)/VGMIRQ.asm | $(BUILD)
+	$(ASM) $(EXP)/VGMIRQ.asm
+	mv $(EXP)/VGMIRQ.cmt $@
 
-$(BUILD)/TATEST.cmt: samples/TATEST.asm | $(BUILD)
-	$(ASM) samples/TATEST.asm
-	mv samples/TATEST.cmt $@
+$(BUILD)/VGMIRQ.raw: $(EXP)/VGMIRQ.asm | $(BUILD)
+	$(ASM) -raw $(EXP)/VGMIRQ.asm
+	mv $(EXP)/VGMIRQ.raw $@
 
-$(BUILD)/OPNCHK.cmt: samples/OPNCHK.asm | $(BUILD)
-	$(ASM) samples/OPNCHK.asm
-	mv samples/OPNCHK.cmt $@
+$(BUILD)/VGMIRQ.asm.log.asz: $(EXP)/VGMIRQ.asm | $(BUILD)
+	$(ASM) -raw -debug -sym $(EXP)/VGMIRQ.asm
+	mv $(EXP)/VGMIRQ.asm.log.asz $@
+	mv $(EXP)/VGMIRQ.sym $(BUILD)/VGMIRQ.sym
+	rm -f $(EXP)/VGMIRQ.raw
 
-$(BUILD)/TIMRSEE.cmt: samples/TIMRSEE.asm | $(BUILD)
-	$(ASM) samples/TIMRSEE.asm
-	mv samples/TIMRSEE.cmt $@
+$(BUILD)/VGMIRQF.cmt: $(EXP)/VGMIRQF.asm | $(BUILD)
+	$(ASM) $(EXP)/VGMIRQF.asm
+	mv $(EXP)/VGMIRQF.cmt $@
 
-$(BUILD)/TATEST3.cmt: samples/TATEST3.asm | $(BUILD)
-	$(ASM) samples/TATEST3.asm
-	mv samples/TATEST3.cmt $@
+$(BUILD)/VGMIRQF.raw: $(EXP)/VGMIRQF.asm | $(BUILD)
+	$(ASM) -raw $(EXP)/VGMIRQF.asm
+	mv $(EXP)/VGMIRQF.raw $@
 
-$(BUILD)/POLL10.cmt: samples/POLL10.asm | $(BUILD)
-	$(ASM) samples/POLL10.asm
-	mv samples/POLL10.cmt $@
+$(BUILD)/VGMIRQF.asm.log.asz: $(EXP)/VGMIRQF.asm | $(BUILD)
+	$(ASM) -raw -debug -sym $(EXP)/VGMIRQF.asm
+	mv $(EXP)/VGMIRQF.asm.log.asz $@
+	mv $(EXP)/VGMIRQF.sym $(BUILD)/VGMIRQF.sym
+	rm -f $(EXP)/VGMIRQF.raw
 
-$(BUILD)/VGMIRQM.cmt: samples/VGMIRQM.asm | $(BUILD)
-	$(ASM) samples/VGMIRQM.asm
-	mv samples/VGMIRQM.cmt $@
+$(BUILD)/VGMIRQP.cmt: $(EXP)/VGMIRQP.asm | $(BUILD)
+	$(ASM) $(EXP)/VGMIRQP.asm
+	mv $(EXP)/VGMIRQP.cmt $@
+
+$(BUILD)/VGMIRQM.cmt: $(EXP)/VGMIRQM.asm | $(BUILD)
+	$(ASM) $(EXP)/VGMIRQM.asm
+	mv $(EXP)/VGMIRQM.cmt $@
+
+$(BUILD)/INTTEST.cmt: $(EXP)/INTTEST.asm | $(BUILD)
+	$(ASM) $(EXP)/INTTEST.asm
+	mv $(EXP)/INTTEST.cmt $@
+
+$(BUILD)/OPNCHK.cmt: $(EXP)/OPNCHK.asm | $(BUILD)
+	$(ASM) $(EXP)/OPNCHK.asm
+	mv $(EXP)/OPNCHK.cmt $@
+
+$(BUILD)/POLL10.cmt: $(EXP)/POLL10.asm | $(BUILD)
+	$(ASM) $(EXP)/POLL10.asm
+	mv $(EXP)/POLL10.cmt $@
+
+$(BUILD)/TIMRSEE.cmt: $(EXP)/TIMRSEE.asm | $(BUILD)
+	$(ASM) $(EXP)/TIMRSEE.asm
+	mv $(EXP)/TIMRSEE.cmt $@
+
+$(BUILD)/TATEST.cmt: $(EXP)/TATEST.asm | $(BUILD)
+	$(ASM) $(EXP)/TATEST.asm
+	mv $(EXP)/TATEST.cmt $@
+
+$(BUILD)/TATEST3.cmt: $(EXP)/TATEST3.asm | $(BUILD)
+	$(ASM) $(EXP)/TATEST3.asm
+	mv $(EXP)/TATEST3.cmt $@
 
 # -debugでアセンブルリスト(.log.asz)とシンボル(.sym)、-rawでベタイメージも生成する
 $(BUILD)/MAIN.raw: $(ASM_SRCS) | $(BUILD)
@@ -157,7 +157,7 @@ $(BUILD)/VGMPLAY.asm.log.asz: samples/VGMPLAY.asm | $(BUILD)
 	mv samples/VGMPLAY.sym $(BUILD)/VGMPLAY.sym
 	rm -f samples/VGMPLAY.raw
 
-list: $(BUILD)/MAIN.raw $(BUILD)/VGMPLAY.asm.log.asz $(BUILD)/VGMIRQ.asm.log.asz $(BUILD)/VGMIRQP.asm.log.asz
+list: $(BUILD)/MAIN.raw $(BUILD)/VGMPLAY.asm.log.asz $(BUILD)/VGMIRQS.asm.log.asz
 
 test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw $(BUILD)/VGMPLAY.raw
 	$(PYTHON) scripts/test_emu_io.py
@@ -207,4 +207,4 @@ $(BUILD):
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all verify-orig list test vgmsim rom burn clean
+.PHONY: all experiments verify-orig list test vgmsim rom burn clean
