@@ -11,7 +11,7 @@
 #   make list     アセンブルリストとシンボルファイルを build/ に生成する
 #   make verify-orig  オリジナル成果物とのバイト一致確認(複数クラスタ読み修正前のコード専用)
 #   make rom      EPROM書き込み用ROMイメージを build/rom/ に生成する
-#   make burn     miniproでEPROMへ書き込む(例: make burn DEVICE=W27C512)
+#   make burn     miniproでEPROMへ書き込む(規定値はW27C512@DIP28)
 #   make clean    build/ を削除する
 
 JAVA    ?= java
@@ -197,10 +197,15 @@ rom: $(BUILD)/64KRAM.hex scripts/makerom.py
 		$(PYTHON) scripts/makerom.py $(BUILD)/64KRAM.hex --device $$d -o $(ROMDIR)/64KRAM-$$d || exit 1; \
 	done
 
-# miniproによるEPROM書き込み。デバイス名は `minipro -L <検索語>` で確認すること
-MINIPRO ?= minipro
-DEVICE  ?= W27C512
-ROM     ?= $(ROMDIR)/64KRAM-$(DEVICE).bin
+# miniproによるEPROM書き込み。
+# DEVICE はminiproが要求するパッケージ付きの名前(例 W27C512@DIP28)。
+# ROM_NAME はbuild/rom/64KRAM-<名前>.bin のサフィックス。@DIP28を外しておく。
+# 別パッケージや別デバイスで焼くときは make burn DEVICE=... ROM_NAME=... で上書き。
+# 検索: minipro -L <型番>
+MINIPRO  ?= minipro
+DEVICE   ?= W27C512@DIP28
+ROM_NAME ?= W27C512
+ROM      ?= $(ROMDIR)/64KRAM-$(ROM_NAME).bin
 
 burn:
 	$(MINIPRO) -p "$(DEVICE)" -w "$(ROM)"
