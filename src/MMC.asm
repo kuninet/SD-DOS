@@ -82,20 +82,26 @@ MMC_1WR:
 ;[MMC]MMCから1バイト受け取る
 ;IN  -
 ;OUT C=受信データ
+;・最適化: PPI_Bの読み込みをループ外に出してEに保持。XOR Aは不要
+;  だったため削除。SCK H遷移はOR(7T)→INC A(4T)。
+;  元 750T → 約 678T (約10%削減)
+;・MMC_RES から JR MMC_1RD.LOOP で飛び込まれる外部参照あり。
+;  そちら側でも E=PPI_Bベース値を準備してから飛び込む必要がある。
 ;=================================================
 MMC_1RD:
 	LD	B,8
-.LOOP:	IN	A,(PPI_B)
-	AND	0FEH
-	OUT	(PPI_B),A
-        OR	001H
-	OUT	(PPI_B),A
-	XOR	A
-	RL	C
+	IN	A,(PPI_B)
+	AND	0FEH				;SCK=0 にしたベース値
+	LD	E,A				;E = ベース値
+.LOOP:	LD	A,E
+	OUT	(PPI_B),A			;SCK=L 出力
+	INC	A				;SCK ビット(=bit0)を 1 に
+	OUT	(PPI_B),A			;SCK=H 出力
+	RL	C				;C <<= 1 (CY=0 が C bit0 に)
 	IN	A,(PPI_C)
-	AND	010H
+	AND	010H				;bit4 を MISO として取り出し
 	JR	Z,.L1
-	INC	C
+	INC	C				;MISO=1 なら C bit0 を立てる
 .L1:	DJNZ	.LOOP
 	RET
 
@@ -124,6 +130,10 @@ MMC_RES:
 	JR	NZ,.LOOP
 
 	LD	BC,0700H			;B<-7
+	;MMC_1RD.LOOP は E=PPI_Bベース値(SCK=0)を要求するので準備
+	IN	A,(PPI_B)
+	AND	0FEH
+	LD	E,A
 	JR	MMC_1RD.LOOP
 
 ;=================================================
