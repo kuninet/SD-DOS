@@ -137,7 +137,11 @@ if DEBUG
 INCLUDE "DEBUG.asm"				;デバッグ用ツール
 endif
 
-INCLUDE	"MMC.asm"				;MMCドライバ
+IF USE_PICSD
+	INCLUDE	"MMC_PIC.asm"			;PIC版SDドライバ(D0H-D6H I/O)
+ELSE
+	INCLUDE	"MMC.asm"				;MMCドライバ(8255ビットバンギング)
+ENDIF
 INCLUDE	"FAT.asm"				;FAT
 INCLUDE	"BUFFER.asm"				;バッファ
 INCLUDE	"CD.asm"				;ディレクトリ変更

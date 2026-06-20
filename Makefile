@@ -6,6 +6,9 @@
 #
 # 主なターゲット:
 #   make          MAIN/IPL/64KRAM + サンプル(SDUMP, VGMPLAY, VGMIRQS)を build/ に生成する
+#                 (既定はビットバンギングSD = USE_PICSD=FALSE)
+#   make picsd    PIC版SDドライバ(USE_PICSD=TRUE)で MAIN を build/MAIN-PICSD.cmt に生成する
+#                 ハード仕様は別リポジトリ kuninet/PC8001extSDRTC を参照
 #   make experiments  参考: samples/experiments/ の実験・診断プログラムを build/ に生成する
 #   make test     回帰テスト(複数クラスタ読みとストリーム読み出しAPI)を実行する
 #   make list     アセンブルリストとシンボルファイルを build/ に生成する
@@ -28,6 +31,21 @@ all: $(BUILD)/MAIN.cmt $(BUILD)/IPL.cmt $(BUILD)/64KRAM.hex $(BUILD)/SDUMP.cmt $
 $(BUILD)/MAIN.cmt: $(ASM_SRCS) | $(BUILD)
 	$(ASM) src/MAIN.asm
 	mv src/MAIN.cmt $@
+
+# ===== PIC版SDドライバ(USE_PICSD=TRUE)ビルド =====
+# コミット済み src/ は触らず、out-of-tree のコピーで LABELS.asm のフラグだけ TRUE 化して
+# アセンブルする。これで「ビットバンギング(既定)」「PICSD」を同一ソースから作り分ける。
+PICSD_SRC = $(BUILD)/picsd-src
+
+picsd: $(BUILD)/MAIN-PICSD.cmt
+
+$(BUILD)/MAIN-PICSD.cmt: $(ASM_SRCS) scripts/picsd_config.py | $(BUILD)
+	rm -rf $(PICSD_SRC)
+	mkdir -p $(PICSD_SRC)
+	cp src/*.asm $(PICSD_SRC)/
+	$(PYTHON) scripts/picsd_config.py $(PICSD_SRC)/LABELS.asm
+	$(ASM) $(PICSD_SRC)/MAIN.asm
+	mv $(PICSD_SRC)/MAIN.cmt $@
 
 $(BUILD)/IPL.cmt: src/IPL.asm | $(BUILD)
 	$(ASM) src/IPL.asm
@@ -218,4 +236,4 @@ $(BUILD):
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all experiments verify-orig list test vgmsim rom burn clean
+.PHONY: all picsd experiments verify-orig list test vgmsim rom burn clean
