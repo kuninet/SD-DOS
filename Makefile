@@ -176,6 +176,7 @@ test: $(BUILD)/MAIN.raw $(BUILD)/SDUMP.raw $(BUILD)/VGMPLAY.raw $(BUILD)/SDRECV.
 	$(PYTHON) scripts/test_sample.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/SDUMP.raw
 	$(PYTHON) scripts/test_vgmplay.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/VGMPLAY.raw
 	$(PYTHON) scripts/test_sdrecv.py $(BUILD)/SDRECV.raw $(BUILD)/SDRECV.sym
+	$(PYTHON) scripts/test_sdrecv_ymodem.py $(BUILD)/MAIN.raw $(BUILD)/MAIN.sym $(BUILD)/SDRECV.raw $(BUILD)/SDRECV.sym
 
 # VGMプレイヤ cycle-accurate シミュレータ(Issue #68 / VGMIRQ F-1 机上検証)
 # VGMPLAY.sym が必要なため list(=-debug アセンブル)に依存する
